@@ -11,6 +11,7 @@
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_mixer.h>
 #include <stdbool.h>
+#include <math.h> // ← 高品質ブラーの powf 用
 
 // ==============================================================
 // キャラデータ構造体
@@ -51,11 +52,11 @@ static SDL_Texture *tex_spark;
 static TTF_Font *font_main;
 static TTF_Font *font_timer;
 
-static int focus = 0;          // カーソル位置
-static int decided_index = -1; // Enter予約のキャラ
+static int focus = 0;
+static int decided_index = -1;
 
-static bool finalizing = false;       // 最終決定後
-static bool pending_finalize = false; // finalize予約フラグ
+static bool finalizing = false;
+static bool pending_finalize = false;
 
 static Uint32 start_ms;
 static Uint32 deadline_ms;
@@ -79,7 +80,7 @@ static SDL_Color lerp_color(SDL_Color a, SDL_Color b, float t)
 }
 
 // ==============================================================
-// 枠周りスパーク位置
+// 枠の周回位置取得
 // ==============================================================
 static void get_spark_pos(SDL_Rect dst, float t, float *ox, float *oy)
 {
@@ -103,14 +104,14 @@ static void get_spark_pos(SDL_Rect dst, float t, float *ox, float *oy)
     else if (t < 0.75f)
     {
         float p = (t - 0.50f) / 0.25f;
-        cx = x + w * (1 - p);
+        cx = x + w * (1.0f - p);
         cy = y + h;
     }
     else
     {
         float p = (t - 0.75f) / 0.25f;
         cx = x;
-        cy = y + h * (1 - p);
+        cy = y + h * (1.0f - p);
     }
 
     *ox = cx;
@@ -118,7 +119,7 @@ static void get_spark_pos(SDL_Rect dst, float t, float *ox, float *oy)
 }
 
 // ==============================================================
-// ネオン枠
+// ネオン枠（高品質ブラーつき）
 // ==============================================================
 static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 {
@@ -127,37 +128,71 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 
     int x = dst.x, y = dst.y, w = dst.w, h = dst.h;
 
-    // 上下の横グラデ
+    // ---- 上下ライン（横グラデーション）----
     for (int i = 0; i < w; i++)
     {
         float p = (float)i / (float)(w - 1);
         SDL_Color col = lerp_color(pink, blue, p);
-
         SDL_SetRenderDrawColor(R, col.r, col.g, col.b, 255);
+
         SDL_RenderDrawPoint(R, x + i, y);
         SDL_RenderDrawPoint(R, x + i, y + h);
     }
 
-    // 左右単色
+    // ---- 左右ライン（単色）----
     SDL_SetRenderDrawColor(R, pink.r, pink.g, pink.b, 255);
     SDL_RenderDrawLine(R, x, y, x, y + h);
 
     SDL_SetRenderDrawColor(R, blue.r, blue.g, blue.b, 255);
     SDL_RenderDrawLine(R, x + w, y, x + w, y + h);
 
-    // スパーク
+    // ---- 高品質スパーク + ブラー尾 ----
     if (tex_spark)
     {
-        float cx, cy;
-        get_spark_pos(dst, t, &cx, &cy);
+        const int trail_count = 12;     // 尾の数（多いと滑らか）
+        const float trail_gap = 0.022f; // 尾の間隔
+        const float size_base = 42.0f;  // 基本サイズ（中心の光）
 
-        SDL_Rect sp = {(int)(cx - 20), (int)(cy - 20), 40, 40};
-        SDL_RenderCopy(R, tex_spark, NULL, &sp);
+        for (int i = 0; i < trail_count; i++)
+        {
+            float tt = t - trail_gap * i;
+            while (tt < 0)
+                tt += 1.0f;
+            while (tt > 1)
+                tt -= 1.0f;
+
+            float cx, cy;
+            get_spark_pos(dst, tt, &cx, &cy);
+
+            float intensity = 1.0f - ((float)i / trail_count);
+
+            SDL_Color col = lerp_color(pink, blue, tt);
+
+            Uint8 r = (Uint8)(col.r * (0.6f + 0.4f * intensity));
+            Uint8 g = (Uint8)(col.g * (0.6f + 0.4f * intensity));
+            Uint8 b = (Uint8)(col.b * (0.6f + 0.4f * intensity));
+
+            SDL_SetTextureColorMod(tex_spark, r, g, b);
+
+            Uint8 alpha = (Uint8)(255 * powf(intensity, 1.8f));
+            SDL_SetTextureAlphaMod(tex_spark, alpha);
+
+            float size = size_base * (0.55f + 0.45f * intensity);
+
+            SDL_Rect sp = {
+                (int)(cx - size / 2),
+                (int)(cy - size / 2),
+                (int)size, (int)size};
+
+            SDL_RenderCopy(R, tex_spark, NULL, &sp);
+        }
+
+        SDL_SetTextureAlphaMod(tex_spark, 255);
     }
 }
 
 // ==============================================================
-// ★最終決定処理（タイムアップ時のみ呼ぶ）
+// ★最終決定処理（タイムアップ時のみ）
 // ==============================================================
 static void finalize_selection(void)
 {
@@ -172,7 +207,6 @@ static void finalize_selection(void)
     json_write_string("selected_girl.json", "id", girls[final_choice].id);
     http_post_phase_done("select");
 
-    // ★ デバッグログ
     SDL_Log("INFO: finalize_selection → play voice for %s (%s)",
             girls[final_choice].name,
             girls[final_choice].voice_path);
@@ -182,24 +216,16 @@ static void finalize_selection(void)
         int ch = Mix_PlayChannel(-1, voice_girl[final_choice], 0);
 
         if (ch == -1)
-        {
             SDL_Log("ERR: Mix_PlayChannel failed: %s", Mix_GetError());
-        }
         else
-        {
             SDL_Log("INFO: Mix_PlayChannel on ch=%d", ch);
-        }
-    }
-    else
-    {
-        SDL_Log("ERR: voice_girl[%d] is NULL", final_choice);
     }
 
     finalize_start_ms = SDL_GetTicks();
 }
 
 // ==============================================================
-// enter 関数
+// enter
 // ==============================================================
 void scene_select_enter(void)
 {
@@ -220,16 +246,12 @@ void scene_select_enter(void)
         voice_girl[i] = Mix_LoadWAV(girls[i].voice_path);
 
         if (!voice_girl[i])
-        {
             SDL_Log("ERR: Failed to load WAV for %s (%s) → %s",
                     girls[i].name,
                     girls[i].voice_path,
                     Mix_GetError());
-        }
         else
-        {
             SDL_Log("OK: Loaded WAV for %s", girls[i].name);
-        }
     }
 
     focus = 0;
@@ -240,51 +262,36 @@ void scene_select_enter(void)
 }
 
 // ==============================================================
-// update 関数（タイムアップ・5秒待機の核）
+// update（タイムアップ & 5秒待機）
 // ==============================================================
 void scene_select_update(float dt)
 {
     Uint32 now = SDL_GetTicks();
 
-    // -----------------------------
-    // ① タイムアップ → finalize予約
-    // -----------------------------
     if (!finalizing && !pending_finalize && now >= deadline_ms)
-    {
         pending_finalize = true;
-    }
 
-    // -----------------------------
-    // ② finalize予約 → 次フレームで1回だけ実行
-    // -----------------------------
     if (pending_finalize)
     {
         finalize_selection();
         pending_finalize = false;
-        return; // finalizeしたフレームでは入力させない
+        return;
     }
 
-    // -----------------------------
-    // ③ finalizing（確定後5秒待機）
-    // -----------------------------
     if (finalizing)
     {
         if (now - finalize_start_ms >= 5000)
             change_scene(SCENE_CHAT);
 
-        return; // finalizing中は入力禁止
+        return;
     }
 
-    // -----------------------------
-    // ④ 通常の選択操作
-    // -----------------------------
     if (input_is_pressed(SDL_SCANCODE_LEFT))
         focus = (focus + 2) % 3;
 
     if (input_is_pressed(SDL_SCANCODE_RIGHT))
         focus = (focus + 1) % 3;
 
-    // Enterはあくまで予約
     if (input_is_down(SDL_SCANCODE_RETURN) ||
         input_is_down(SDL_SCANCODE_KP_ENTER))
     {
@@ -297,7 +304,7 @@ void scene_select_update(float dt)
 }
 
 // ==============================================================
-// render 関数
+// render
 // ==============================================================
 void scene_select_render(SDL_Renderer *R)
 {
@@ -337,7 +344,6 @@ void scene_select_render(SDL_Renderer *R)
         if (i == focus)
             draw_neon_frame(R, dst, glow_t);
 
-        // 最終決定されたキャラがいたら SELECTED 表示
         if (decided_index == i)
         {
             SDL_Rect icon_dst = {
@@ -351,7 +357,7 @@ void scene_select_render(SDL_Renderer *R)
 }
 
 // ==============================================================
-// exit 関数
+// exit
 // ==============================================================
 void scene_select_exit(void)
 {
