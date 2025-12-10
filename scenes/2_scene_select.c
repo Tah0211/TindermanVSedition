@@ -3,15 +3,14 @@
 #include "../core/input.h"
 #include "../core/engine.h"
 #include "../util/texture.h"
-#include "../util/json.h"
-#include "../net/http_client.h"
 #include "../ui/ui_text.h"
+#include "../util/json.h" // build.json utility
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_mixer.h>
 #include <stdbool.h>
-#include <math.h> // ← 高品質ブラーの powf 用
+#include <math.h>
 
 // ==============================================================
 // キャラデータ構造体
@@ -72,54 +71,50 @@ static float glow_t = 0.0f;
 static SDL_Color lerp_color(SDL_Color a, SDL_Color b, float t)
 {
     SDL_Color c;
-    c.r = (Uint8)(a.r + (b.r - a.r) * t);
-    c.g = (Uint8)(a.g + (b.g - a.g) * t);
-    c.b = (Uint8)(a.b + (b.b - a.b) * t);
+    c.r = a.r + (b.r - a.r) * t;
+    c.g = a.g + (b.g - a.g) * t;
+    c.b = a.b + (b.b - a.b) * t;
     c.a = 255;
     return c;
 }
 
 // ==============================================================
-// 枠の周回位置取得
+// 枠の周回位置
 // ==============================================================
 static void get_spark_pos(SDL_Rect dst, float t, float *ox, float *oy)
 {
     float x = dst.x, y = dst.y, w = dst.w, h = dst.h;
-    float cx, cy;
 
     t = fmodf(t, 1.0f);
 
     if (t < 0.25f)
     {
         float p = t / 0.25f;
-        cx = x + w * p;
-        cy = y;
+        *ox = x + w * p;
+        *oy = y;
     }
     else if (t < 0.50f)
     {
         float p = (t - 0.25f) / 0.25f;
-        cx = x + w;
-        cy = y + h * p;
+        *ox = x + w;
+        *oy = y + h * p;
     }
     else if (t < 0.75f)
     {
         float p = (t - 0.50f) / 0.25f;
-        cx = x + w * (1.0f - p);
-        cy = y + h;
+        *ox = x + w * (1.0f - p);
+        *oy = y + h;
     }
     else
     {
         float p = (t - 0.75f) / 0.25f;
-        cx = x;
-        cy = y + h * (1.0f - p);
+        *ox = x;
+        *oy = y + h * (1.0f - p);
     }
-
-    *ox = cx;
-    *oy = cy;
 }
 
 // ==============================================================
-// ネオン枠（高品質ブラーつき）
+// ネオン枠（ブラー付）
 // ==============================================================
 static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 {
@@ -128,7 +123,7 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 
     int x = dst.x, y = dst.y, w = dst.w, h = dst.h;
 
-    // ---- 上下ライン（横グラデーション）----
+    // 上下ライン
     for (int i = 0; i < w; i++)
     {
         float p = (float)i / (float)(w - 1);
@@ -139,26 +134,26 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
         SDL_RenderDrawPoint(R, x + i, y + h);
     }
 
-    // ---- 左右ライン（単色）----
+    // 左右ライン
     SDL_SetRenderDrawColor(R, pink.r, pink.g, pink.b, 255);
     SDL_RenderDrawLine(R, x, y, x, y + h);
 
     SDL_SetRenderDrawColor(R, blue.r, blue.g, blue.b, 255);
     SDL_RenderDrawLine(R, x + w, y, x + w, y + h);
 
-    // ---- 高品質スパーク + ブラー尾 ----
+    // スパーク（尾引き）
     if (tex_spark)
     {
-        const int trail_count = 12;     // 尾の数（多いと滑らか）
-        const float trail_gap = 0.022f; // 尾の間隔
-        const float size_base = 42.0f;  // 基本サイズ（中心の光）
+        const int trail_count = 12;
+        const float trail_gap = 0.022f;
+        const float size_base = 42.0f;
 
         for (int i = 0; i < trail_count; i++)
         {
             float tt = t - trail_gap * i;
-            while (tt < 0)
+            if (tt < 0)
                 tt += 1.0f;
-            while (tt > 1)
+            if (tt > 1)
                 tt -= 1.0f;
 
             float cx, cy;
@@ -167,22 +162,15 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
             float intensity = 1.0f - ((float)i / trail_count);
 
             SDL_Color col = lerp_color(pink, blue, tt);
-
-            Uint8 r = (Uint8)(col.r * (0.6f + 0.4f * intensity));
-            Uint8 g = (Uint8)(col.g * (0.6f + 0.4f * intensity));
-            Uint8 b = (Uint8)(col.b * (0.6f + 0.4f * intensity));
+            Uint8 r = col.r * (0.6f + 0.4f * intensity);
+            Uint8 g = col.g * (0.6f + 0.4f * intensity);
+            Uint8 b = col.b * (0.6f + 0.4f * intensity);
 
             SDL_SetTextureColorMod(tex_spark, r, g, b);
-
-            Uint8 alpha = (Uint8)(255 * powf(intensity, 1.8f));
-            SDL_SetTextureAlphaMod(tex_spark, alpha);
+            SDL_SetTextureAlphaMod(tex_spark, 255 * powf(intensity, 1.8f));
 
             float size = size_base * (0.55f + 0.45f * intensity);
-
-            SDL_Rect sp = {
-                (int)(cx - size / 2),
-                (int)(cy - size / 2),
-                (int)size, (int)size};
+            SDL_Rect sp = {(int)(cx - size / 2), (int)(cy - size / 2), (int)size, (int)size};
 
             SDL_RenderCopy(R, tex_spark, NULL, &sp);
         }
@@ -192,43 +180,50 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 }
 
 // ==============================================================
-// ★最終決定処理（タイムアップ時のみ）
+// finalize_selection
 // ==============================================================
 static void finalize_selection(void)
 {
     if (finalizing)
         return;
-
     finalizing = true;
 
     int final_choice = (decided_index != -1) ? decided_index : focus;
+    if (final_choice < 0 || final_choice >= 3)
+        final_choice = 0;
+
     decided_index = final_choice;
+    const char *gid = girls[final_choice].id;
 
-    json_write_string("selected_girl.json", "id", girls[final_choice].id);
-    http_post_phase_done("select");
-
-    SDL_Log("INFO: finalize_selection → play voice for %s (%s)",
-            girls[final_choice].name,
-            girls[final_choice].voice_path);
+    // ----------- girl_id を書き込み -----------
+    json_write_string("build.json", "girl_id", gid);
 
     if (voice_girl[final_choice])
-    {
-        int ch = Mix_PlayChannel(-1, voice_girl[final_choice], 0);
-
-        if (ch == -1)
-            SDL_Log("ERR: Mix_PlayChannel failed: %s", Mix_GetError());
-        else
-            SDL_Log("INFO: Mix_PlayChannel on ch=%d", ch);
-    }
+        Mix_PlayChannel(-1, voice_girl[final_choice], 0);
 
     finalize_start_ms = SDL_GetTicks();
 }
 
 // ==============================================================
-// enter
+// enter（★完全初期化方式に変更済）
 // ==============================================================
 void scene_select_enter(void)
 {
+    // ------------------------------------------------------------
+    // ★ build.json を完全削除 → 初期化
+    // ------------------------------------------------------------
+    remove("build.json"); // ← 追加。既存ファイルを完全消去。
+
+    json_write_string("build.json", "girl_id", "");
+    json_write_int("build.json", "affection", 0);
+    json_write_object("build.json", "stats"); // {}
+    json_write_array("build.json", "skills"); // []
+
+    SDL_Log("[SELECT] build.json fully reset.");
+
+    // ------------------------------------------------------------
+    // 以下は既存処理
+    // ------------------------------------------------------------
     start_ms = SDL_GetTicks();
     deadline_ms = start_ms + 15000;
 
@@ -242,17 +237,7 @@ void scene_select_enter(void)
     tex_spark = load_texture(g_renderer, "assets/effects/spark.png");
 
     for (int i = 0; i < 3; i++)
-    {
         voice_girl[i] = Mix_LoadWAV(girls[i].voice_path);
-
-        if (!voice_girl[i])
-            SDL_Log("ERR: Failed to load WAV for %s (%s) → %s",
-                    girls[i].name,
-                    girls[i].voice_path,
-                    Mix_GetError());
-        else
-            SDL_Log("OK: Loaded WAV for %s", girls[i].name);
-    }
 
     focus = 0;
     decided_index = -1;
@@ -262,7 +247,7 @@ void scene_select_enter(void)
 }
 
 // ==============================================================
-// update（タイムアップ & 5秒待機）
+// update
 // ==============================================================
 void scene_select_update(float dt)
 {
@@ -282,7 +267,6 @@ void scene_select_update(float dt)
     {
         if (now - finalize_start_ms >= 5000)
             change_scene(SCENE_CHAT);
-
         return;
     }
 
@@ -327,16 +311,18 @@ void scene_select_render(SDL_Renderer *R)
         int base_y = 120;
 
         float scale = (i == focus ? 1.07f : 1.0f);
-
-        int w = (int)(320 * scale);
-        int h = (int)(480 * scale);
+        int w = 320 * scale;
+        int h = 480 * scale;
 
         SDL_Rect dst = {
             base_x + 160 - w / 2,
             base_y + 240 - h / 2,
             w, h};
 
-        SDL_RenderCopy(R, tex_portrait[i], NULL, &dst);
+        if (tex_portrait[i])
+            SDL_RenderCopy(R, tex_portrait[i], NULL, &dst);
+        else
+            SDL_RenderDrawRect(R, &dst);
 
         ui_text_draw(R, font_main, girls[i].name, base_x, base_y + 500);
         ui_text_draw(R, font_main, girls[i].type, base_x, base_y + 540);
@@ -344,13 +330,12 @@ void scene_select_render(SDL_Renderer *R)
         if (i == focus)
             draw_neon_frame(R, dst, glow_t);
 
-        if (decided_index == i)
+        if (decided_index == i && tex_selected_icon)
         {
             SDL_Rect icon_dst = {
                 dst.x + dst.w / 2 - 60,
                 dst.y - 60,
                 120, 120};
-
             SDL_RenderCopy(R, tex_selected_icon, NULL, &icon_dst);
         }
     }
@@ -367,13 +352,11 @@ void scene_select_exit(void)
 
     if (tex_selected_icon)
         SDL_DestroyTexture(tex_selected_icon);
-
     if (tex_spark)
         SDL_DestroyTexture(tex_spark);
 
     if (font_main)
         TTF_CloseFont(font_main);
-
     if (font_timer)
         TTF_CloseFont(font_timer);
 

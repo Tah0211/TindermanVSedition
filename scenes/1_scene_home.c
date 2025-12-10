@@ -4,6 +4,7 @@
 #include "../core/engine.h"
 #include "../util/texture.h"
 #include "../ui/ui_text.h"
+#include "../ui/ui_button.h"
 
 // ▼▼▼ ホーム画面データ ▼▼▼
 static SDL_Texture *bg_title = NULL; // 通常背景

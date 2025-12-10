@@ -9,4 +9,6 @@ bool input_is_pressed(SDL_Scancode sc);
 bool input_is_down(SDL_Scancode sc);
 bool input_is_released(SDL_Scancode sc);
 
+const char *input_get_text(void);
+
 #endif
