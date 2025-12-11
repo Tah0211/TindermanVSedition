@@ -11,6 +11,7 @@
 #include <SDL2/SDL_mixer.h>
 #include <stdbool.h>
 #include <math.h>
+#include <stdio.h> // ← 追加：build.json 初期化用
 
 // ==============================================================
 // キャラデータ構造体
@@ -64,6 +65,31 @@ static Uint32 finalize_start_ms;
 static Mix_Chunk *voice_girl[3] = {NULL};
 
 static float glow_t = 0.0f;
+
+// ==============================================================
+// build.json 初期化（★ここで完全に書き直す）
+// ==============================================================
+static void reset_build_json(void)
+{
+    const char *path = "build.json";
+    FILE *fp = fopen(path, "w");
+    if (!fp)
+    {
+        SDL_Log("[SELECT] Failed to open %s for write", path);
+        return;
+    }
+
+    // 初期好感度 30 / stats={}, skills=[] をまとめて出力
+    fputs("{\n", fp);
+    fputs("  \"girl_id\": \"\",\n", fp);
+    fputs("  \"affection\": 30,\n", fp);
+    fputs("  \"stats\": {},\n", fp);
+    fputs("  \"skills\": []\n", fp);
+    fputs("}\n", fp);
+
+    fclose(fp);
+    SDL_Log("[SELECT] build.json reset with initial affection=30");
+}
 
 // ==============================================================
 // 色補間
@@ -167,7 +193,7 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
             Uint8 b = col.b * (0.6f + 0.4f * intensity);
 
             SDL_SetTextureColorMod(tex_spark, r, g, b);
-            SDL_SetTextureAlphaMod(tex_spark, 255 * powf(intensity, 1.8f));
+            SDL_SetTextureAlphaMod(tex_spark, (Uint8)(255 * powf(intensity, 1.8f)));
 
             float size = size_base * (0.55f + 0.45f * intensity);
             SDL_Rect sp = {(int)(cx - size / 2), (int)(cy - size / 2), (int)size, (int)size};
@@ -195,8 +221,9 @@ static void finalize_selection(void)
     decided_index = final_choice;
     const char *gid = girls[final_choice].id;
 
-    // ----------- girl_id を書き込み -----------
+    // ----------- girl_id を上書き（affection 等は reset_build_json で済ませる）-----------
     json_write_string("build.json", "girl_id", gid);
+    SDL_Log("[SELECT] build.json finalized (girl_id=%s)", gid);
 
     if (voice_girl[final_choice])
         Mix_PlayChannel(-1, voice_girl[final_choice], 0);
@@ -205,25 +232,14 @@ static void finalize_selection(void)
 }
 
 // ==============================================================
-// enter（★完全初期化方式に変更済）
+// enter
 // ==============================================================
 void scene_select_enter(void)
 {
-    // ------------------------------------------------------------
-    // ★ build.json を完全削除 → 初期化
-    // ------------------------------------------------------------
-    remove("build.json"); // ← 追加。既存ファイルを完全消去。
+    // ★ 毎回ここで build.json を完全初期化
+    reset_build_json();
 
-    json_write_string("build.json", "girl_id", "");
-    json_write_int("build.json", "affection", 0);
-    json_write_object("build.json", "stats"); // {}
-    json_write_array("build.json", "skills"); // []
-
-    SDL_Log("[SELECT] build.json fully reset.");
-
-    // ------------------------------------------------------------
     // 以下は既存処理
-    // ------------------------------------------------------------
     start_ms = SDL_GetTicks();
     deadline_ms = start_ms + 15000;
 
@@ -311,8 +327,8 @@ void scene_select_render(SDL_Renderer *R)
         int base_y = 120;
 
         float scale = (i == focus ? 1.07f : 1.0f);
-        int w = 320 * scale;
-        int h = 480 * scale;
+        int w = (int)(320 * scale);
+        int h = (int)(480 * scale);
 
         SDL_Rect dst = {
             base_x + 160 - w / 2,
