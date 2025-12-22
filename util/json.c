@@ -17,11 +17,19 @@ static char *read_file(const char *filename)
     rewind(fp);
 
     char *buf = malloc(size + 1);
-    fread(buf, 1, size, fp);
-    buf[size] = '\0';
+    if (!buf)
+    {
+        fclose(fp);
+        return NULL;
+    }
+
+    size_t n = fread(buf, 1, size, fp);
+    buf[n] = '\0';
+
     fclose(fp);
     return buf;
 }
+
 
 // =============================================================
 // 内部用：キーを探し、値を書き換える（超軽量）

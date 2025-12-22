@@ -1,6 +1,11 @@
 {
-  "girl_id": "himari",
-  "affection": 29,
+  "girl_id": "kiritan",
+  "affection": 61,
+  "morale": -5,
+  "phase": 0,
+  "turn_in_phase": 0,
+  "core_used": false,
   "stats": {},
-  "skills": []
+  "skills": [],
+  "emotion": "fear"
 }

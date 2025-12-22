@@ -4,14 +4,14 @@
 #include "../core/engine.h"
 #include "../util/texture.h"
 #include "../ui/ui_text.h"
-#include "../util/json.h" // build.json utility
+#include "../util/json.h"
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_mixer.h>
 #include <stdbool.h>
 #include <math.h>
-#include <stdio.h> // ← 追加：build.json 初期化用
+#include <stdio.h>
 
 // ==============================================================
 // キャラデータ構造体
@@ -43,6 +43,20 @@ static Girl girls[3] = {
 };
 
 // ==============================================================
+// キャラ別 初期戦意
+// ==============================================================
+static int base_morale_by_index(int idx)
+{
+    switch (idx)
+    {
+    case 0: return 0;   // himari
+    case 1: return -5;  // kiritan
+    case 2: return -2;  // sayo
+    default: return 0;
+    }
+}
+
+// ==============================================================
 // ステート
 // ==============================================================
 static SDL_Texture *tex_portrait[3];
@@ -67,29 +81,33 @@ static Mix_Chunk *voice_girl[3] = {NULL};
 static float glow_t = 0.0f;
 
 // ==============================================================
-// build.json 初期化（★ここで完全に書き直す）
+// build.json 初期化（状態枠を必ず作る）
 // ==============================================================
 static void reset_build_json(void)
 {
-    const char *path = "build.json";
-    FILE *fp = fopen(path, "w");
+    FILE *fp = fopen("build.json", "w");
     if (!fp)
     {
-        SDL_Log("[SELECT] Failed to open %s for write", path);
+        SDL_Log("[SELECT] Failed to create build.json");
         return;
     }
 
-    // 初期好感度 30 / stats={}, skills=[] をまとめて出力
     fputs("{\n", fp);
     fputs("  \"girl_id\": \"\",\n", fp);
     fputs("  \"affection\": 30,\n", fp);
+    fputs("  \"morale\": 0,\n", fp);
+    fputs("  \"phase\": 0,\n", fp);
+    fputs("  \"turn_in_phase\": 0,\n", fp);
+    fputs("  \"core_used\": false,\n", fp);
     fputs("  \"stats\": {},\n", fp);
     fputs("  \"skills\": []\n", fp);
     fputs("}\n", fp);
 
     fclose(fp);
-    SDL_Log("[SELECT] build.json reset with initial affection=30");
+    SDL_Log("[SELECT] build.json initialized");
 }
+
+
 
 // ==============================================================
 // 色補間
@@ -110,7 +128,6 @@ static SDL_Color lerp_color(SDL_Color a, SDL_Color b, float t)
 static void get_spark_pos(SDL_Rect dst, float t, float *ox, float *oy)
 {
     float x = dst.x, y = dst.y, w = dst.w, h = dst.h;
-
     t = fmodf(t, 1.0f);
 
     if (t < 0.25f)
@@ -140,7 +157,7 @@ static void get_spark_pos(SDL_Rect dst, float t, float *ox, float *oy)
 }
 
 // ==============================================================
-// ネオン枠（ブラー付）
+// ネオン枠
 // ==============================================================
 static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 {
@@ -149,25 +166,21 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 
     int x = dst.x, y = dst.y, w = dst.w, h = dst.h;
 
-    // 上下ライン
     for (int i = 0; i < w; i++)
     {
         float p = (float)i / (float)(w - 1);
         SDL_Color col = lerp_color(pink, blue, p);
         SDL_SetRenderDrawColor(R, col.r, col.g, col.b, 255);
-
         SDL_RenderDrawPoint(R, x + i, y);
         SDL_RenderDrawPoint(R, x + i, y + h);
     }
 
-    // 左右ライン
     SDL_SetRenderDrawColor(R, pink.r, pink.g, pink.b, 255);
     SDL_RenderDrawLine(R, x, y, x, y + h);
 
     SDL_SetRenderDrawColor(R, blue.r, blue.g, blue.b, 255);
     SDL_RenderDrawLine(R, x + w, y, x + w, y + h);
 
-    // スパーク（尾引き）
     if (tex_spark)
     {
         const int trail_count = 12;
@@ -177,56 +190,61 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
         for (int i = 0; i < trail_count; i++)
         {
             float tt = t - trail_gap * i;
-            if (tt < 0)
-                tt += 1.0f;
-            if (tt > 1)
-                tt -= 1.0f;
+            if (tt < 0) tt += 1.0f;
 
             float cx, cy;
             get_spark_pos(dst, tt, &cx, &cy);
 
             float intensity = 1.0f - ((float)i / trail_count);
-
             SDL_Color col = lerp_color(pink, blue, tt);
-            Uint8 r = col.r * (0.6f + 0.4f * intensity);
-            Uint8 g = col.g * (0.6f + 0.4f * intensity);
-            Uint8 b = col.b * (0.6f + 0.4f * intensity);
 
-            SDL_SetTextureColorMod(tex_spark, r, g, b);
-            SDL_SetTextureAlphaMod(tex_spark, (Uint8)(255 * powf(intensity, 1.8f)));
+            SDL_SetTextureColorMod(
+                tex_spark,
+                col.r * intensity,
+                col.g * intensity,
+                col.b * intensity
+            );
+
+            SDL_SetTextureAlphaMod(
+                tex_spark,
+                (Uint8)(255 * powf(intensity, 1.8f))
+            );
 
             float size = size_base * (0.55f + 0.45f * intensity);
-            SDL_Rect sp = {(int)(cx - size / 2), (int)(cy - size / 2), (int)size, (int)size};
+            SDL_Rect sp = {
+                (int)(cx - size / 2),
+                (int)(cy - size / 2),
+                (int)size,
+                (int)size
+            };
 
             SDL_RenderCopy(R, tex_spark, NULL, &sp);
         }
-
         SDL_SetTextureAlphaMod(tex_spark, 255);
     }
 }
 
 // ==============================================================
-// finalize_selection
+// 選択確定
 // ==============================================================
 static void finalize_selection(void)
 {
-    if (finalizing)
-        return;
+    if (finalizing) return;
     finalizing = true;
 
-    int final_choice = (decided_index != -1) ? decided_index : focus;
-    if (final_choice < 0 || final_choice >= 3)
-        final_choice = 0;
+    int idx = (decided_index != -1) ? decided_index : focus;
+    if (idx < 0 || idx >= 3) idx = 0;
 
-    decided_index = final_choice;
-    const char *gid = girls[final_choice].id;
+    decided_index = idx;
 
-    // ----------- girl_id を上書き（affection 等は reset_build_json で済ませる）-----------
-    json_write_string("build.json", "girl_id", gid);
-    SDL_Log("[SELECT] build.json finalized (girl_id=%s)", gid);
+    json_write_string("build.json", "girl_id", girls[idx].id);
+    json_write_int("build.json", "morale", base_morale_by_index(idx));
 
-    if (voice_girl[final_choice])
-        Mix_PlayChannel(-1, voice_girl[final_choice], 0);
+    SDL_Log("[SELECT] girl=%s morale=%d",
+            girls[idx].id, base_morale_by_index(idx));
+
+    if (voice_girl[idx])
+        Mix_PlayChannel(-1, voice_girl[idx], 0);
 
     finalize_start_ms = SDL_GetTicks();
 }
@@ -236,10 +254,8 @@ static void finalize_selection(void)
 // ==============================================================
 void scene_select_enter(void)
 {
-    // ★ 毎回ここで build.json を完全初期化
     reset_build_json();
 
-    // 以下は既存処理
     start_ms = SDL_GetTicks();
     deadline_ms = start_ms + 15000;
 
@@ -299,8 +315,7 @@ void scene_select_update(float dt)
     }
 
     glow_t += dt * 0.6f;
-    if (glow_t >= 1.0f)
-        glow_t -= 1.0f;
+    if (glow_t >= 1.0f) glow_t -= 1.0f;
 }
 
 // ==============================================================
@@ -314,8 +329,8 @@ void scene_select_render(SDL_Renderer *R)
     ui_text_draw(R, font_main, "SELECT", 40, 20);
 
     int remain = (deadline_ms > SDL_GetTicks())
-                     ? (deadline_ms - SDL_GetTicks()) / 1000
-                     : 0;
+                 ? (deadline_ms - SDL_GetTicks()) / 1000
+                 : 0;
 
     char buf[32];
     snprintf(buf, sizeof(buf), "00:%02d", remain);
@@ -333,12 +348,11 @@ void scene_select_render(SDL_Renderer *R)
         SDL_Rect dst = {
             base_x + 160 - w / 2,
             base_y + 240 - h / 2,
-            w, h};
+            w, h
+        };
 
         if (tex_portrait[i])
             SDL_RenderCopy(R, tex_portrait[i], NULL, &dst);
-        else
-            SDL_RenderDrawRect(R, &dst);
 
         ui_text_draw(R, font_main, girls[i].name, base_x, base_y + 500);
         ui_text_draw(R, font_main, girls[i].type, base_x, base_y + 540);
@@ -351,7 +365,8 @@ void scene_select_render(SDL_Renderer *R)
             SDL_Rect icon_dst = {
                 dst.x + dst.w / 2 - 60,
                 dst.y - 60,
-                120, 120};
+                120, 120
+            };
             SDL_RenderCopy(R, tex_selected_icon, NULL, &icon_dst);
         }
     }
@@ -363,20 +378,14 @@ void scene_select_render(SDL_Renderer *R)
 void scene_select_exit(void)
 {
     for (int i = 0; i < 3; i++)
-        if (tex_portrait[i])
-            SDL_DestroyTexture(tex_portrait[i]);
+        if (tex_portrait[i]) SDL_DestroyTexture(tex_portrait[i]);
 
-    if (tex_selected_icon)
-        SDL_DestroyTexture(tex_selected_icon);
-    if (tex_spark)
-        SDL_DestroyTexture(tex_spark);
+    if (tex_selected_icon) SDL_DestroyTexture(tex_selected_icon);
+    if (tex_spark) SDL_DestroyTexture(tex_spark);
 
-    if (font_main)
-        TTF_CloseFont(font_main);
-    if (font_timer)
-        TTF_CloseFont(font_timer);
+    if (font_main) TTF_CloseFont(font_main);
+    if (font_timer) TTF_CloseFont(font_timer);
 
     for (int i = 0; i < 3; i++)
-        if (voice_girl[i])
-            Mix_FreeChunk(voice_girl[i]);
+        if (voice_girl[i]) Mix_FreeChunk(voice_girl[i]);
 }
