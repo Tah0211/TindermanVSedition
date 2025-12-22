@@ -21,7 +21,9 @@ SRC = \
     \
     util/texture.c \
     util/timer.c \
-    util/json.c
+    util/json.c \
+    \
+    net/net_client.c
 
 # .c → .o 変換
 OBJ = $(SRC:.c=.o)
