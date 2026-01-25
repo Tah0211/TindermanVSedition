@@ -14,6 +14,8 @@ SRC = \
     scenes/1_scene_home.c \
     scenes/2_scene_select.c \
     scenes/3_scene_chat.c \
+    scenes/4_scene_allocate.c \
+    scenes/5_scene_battle.c \
     \
     ui/ui_button.c \
     ui/ui_card.c \
@@ -21,8 +23,7 @@ SRC = \
     \
     util/texture.c \
     util/timer.c \
-    util/json.c \
-    \
+    util/json.c
 
 # .c → .o 変換
 OBJ = $(SRC:.c=.o)

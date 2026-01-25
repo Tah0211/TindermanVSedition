@@ -2,13 +2,73 @@
   "messages": [
     {
       "role": "user",
-      "content": "konnitiha,kimino namaeha?"
+      "content": "…"
     },
     {
       "role": "assistant",
-      "content": "こんにちはございます。冥鳴ひまりと申します。よろしくお願いいたしますね。",
+      "content": "あの…何か、お考えでしょうか。よろしければ、お話しませんか。",
+      "emotion": "anticipation",
+      "heart_delta": 0
+    },
+    {
+      "role": "user",
+      "content": "a"
+    },
+    {
+      "role": "assistant",
+      "content": "あの…『a』、ですか。何か、おっしゃりたいことでしょうか。",
+      "emotion": "surprise",
+      "heart_delta": 0
+    },
+    {
+      "role": "user",
+      "content": "kawaii"
+    },
+    {
+      "role": "assistant",
+      "content": "ありがとうございます…そんなふうに言っていただけると、少し照れますね。",
+      "emotion": "joy",
+      "heart_delta": 3
+    },
+    {
+      "role": "user",
+      "content": "ya"
+    },
+    {
+      "role": "assistant",
+      "content": "…『ya』、ですか。何か、楽しいお話でしょうか。",
+      "emotion": "anticipation",
+      "heart_delta": 0
+    },
+    {
+      "role": "user",
+      "content": "kawaii"
+    },
+    {
+      "role": "assistant",
+      "content": "また、ありがとうございます…そんなふうに言っていただけて、嬉しいです。",
+      "emotion": "joy",
+      "heart_delta": 1
+    },
+    {
+      "role": "user",
+      "content": "kawaii"
+    },
+    {
+      "role": "assistant",
+      "content": "ふふ、またですか…ありがとうございます。でも、そんなに褒められると、ちょっと本気で言ってるのか疑っちゃいますよ。",
       "emotion": "joy",
       "heart_delta": 2
+    },
+    {
+      "role": "user",
+      "content": "kawaii"
+    },
+    {
+      "role": "assistant",
+      "content": "ええ、またですか…ありがとうございます。嬉しいですけど、なんだか照れくさくなってきました。",
+      "emotion": "joy",
+      "heart_delta": 1
     }
   ]
 }

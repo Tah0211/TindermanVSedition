@@ -1,11 +1,20 @@
 {
-  "girl_id": "himari",
-  "affection": 32,
-  "morale": 0,
-  "phase": 0,
-  "turn_in_phase": 0,
-  "core_used": false,
-  "stats": {},
-  "skills": [],
-  "emotion": "joy"
+"girl_id": "himari",
+"affection": 31,
+"phase": 0,
+"turn_in_phase": 0,
+"core_used": false,
+"hp_base": 120,
+"atk_base": 20,
+"sp_base": 14,
+"st_base": 80,
+"st_regen_base": 5,
+"hp_add": 11,
+"atk_add": 0,
+"sp_add": 0,
+"st_add": 0,
+"skills": [],
+"morale": 0,
+"emotion": "joy"
+  "tag_learned": 0
 }

@@ -3,11 +3,15 @@
 
 #include <SDL2/SDL.h>
 
-typedef enum {
+typedef enum
+{
     SCENE_HOME = 0,
     SCENE_SELECT,
-    SCENE_CHAT
+    SCENE_CHAT,
+    SCENE_ALLOCATE,
+    SCENE_BATTLE,   // ★追加
 } SceneID;
+
 
 void scene_manager_init(void);
 void change_scene(SceneID next);

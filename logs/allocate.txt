@@ -1,0 +1,5 @@
+HP 110
+ATK 20
+SPD 20
+ST 20
+TAG 0

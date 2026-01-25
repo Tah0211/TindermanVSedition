@@ -43,16 +43,33 @@ static Girl girls[3] = {
 };
 
 // ==============================================================
-// キャラ別 初期戦意
+// ステータス（基礎）
+//   ※画像の「基礎ステータス(確定)」に合わせる
+//   - himari: HP120 ATK20 SP14 ST80 (毎ターン+5)
+//   - kiritan: HP100 ATK5  SP8  ST40 (毎ターン+20)
+//   - sayo: 全部 0（暫定）
 // ==============================================================
-static int base_morale_by_index(int idx)
+typedef struct
+{
+    int hp;
+    int atk;
+    int sp;
+    int st;
+    int st_regen; // 毎ターン +X（不要なら削除OK）
+} BaseStats;
+
+static BaseStats base_stats_by_index(int idx)
 {
     switch (idx)
     {
-    case 0: return 0;   // himari
-    case 1: return -5;  // kiritan
-    case 2: return -2;  // sayo
-    default: return 0;
+    case 0: // himari
+        return (BaseStats){120, 20, 14, 80, 5};
+    case 1: // kiritan
+        return (BaseStats){100, 5, 8, 40, 20};
+    case 2: // sayo (暫定：全部0)
+        return (BaseStats){0, 0, 0, 0, 0};
+    default:
+        return (BaseStats){0, 0, 0, 0, 0};
     }
 }
 
@@ -82,6 +99,8 @@ static float glow_t = 0.0f;
 
 // ==============================================================
 // build.json 初期化（状態枠を必ず作る）
+//   - morale(戦意) は廃止したので出力しない
+//   - statsはネストせず、トップレベルに base/add を置く（json util の互換性優先）
 // ==============================================================
 static void reset_build_json(void)
 {
@@ -94,20 +113,35 @@ static void reset_build_json(void)
 
     fputs("{\n", fp);
     fputs("  \"girl_id\": \"\",\n", fp);
+
+    // 初期好感度（あなたの現行仕様：30）
     fputs("  \"affection\": 30,\n", fp);
-    fputs("  \"morale\": 0,\n", fp);
+
+    // 会話進行系（必要なら残す）
     fputs("  \"phase\": 0,\n", fp);
     fputs("  \"turn_in_phase\": 0,\n", fp);
     fputs("  \"core_used\": false,\n", fp);
-    fputs("  \"stats\": {},\n", fp);
+
+    // --- 基礎ステ（SELECT確定で上書き） ---
+    fputs("  \"hp_base\": 0,\n", fp);
+    fputs("  \"atk_base\": 0,\n", fp);
+    fputs("  \"sp_base\": 0,\n", fp);
+    fputs("  \"st_base\": 0,\n", fp);
+    fputs("  \"st_regen_base\": 0,\n", fp);
+
+    // --- 配分分（ALLOCATEで増やす） ---
+    fputs("  \"hp_add\": 0,\n", fp);
+    fputs("  \"atk_add\": 0,\n", fp);
+    fputs("  \"sp_add\": 0,\n", fp);
+    fputs("  \"st_add\": 0,\n", fp);
+
+    // skills
     fputs("  \"skills\": []\n", fp);
     fputs("}\n", fp);
 
     fclose(fp);
     SDL_Log("[SELECT] build.json initialized");
 }
-
-
 
 // ==============================================================
 // 色補間
@@ -200,9 +234,9 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 
             SDL_SetTextureColorMod(
                 tex_spark,
-                col.r * intensity,
-                col.g * intensity,
-                col.b * intensity
+                (Uint8)(col.r * intensity),
+                (Uint8)(col.g * intensity),
+                (Uint8)(col.b * intensity)
             );
 
             SDL_SetTextureAlphaMod(
@@ -226,6 +260,9 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 
 // ==============================================================
 // 選択確定
+//   - girl_id を書く
+//   - キャラ別の基礎ステを build.json に注入
+//   - 戦意(morale)は廃止したので一切触らない
 // ==============================================================
 static void finalize_selection(void)
 {
@@ -237,11 +274,19 @@ static void finalize_selection(void)
 
     decided_index = idx;
 
+    // キャラID
     json_write_string("build.json", "girl_id", girls[idx].id);
-    json_write_int("build.json", "morale", base_morale_by_index(idx));
 
-    SDL_Log("[SELECT] girl=%s morale=%d",
-            girls[idx].id, base_morale_by_index(idx));
+    // キャラ別 基礎ステ注入
+    BaseStats bs = base_stats_by_index(idx);
+    json_write_int("build.json", "hp_base", bs.hp);
+    json_write_int("build.json", "atk_base", bs.atk);
+    json_write_int("build.json", "sp_base", bs.sp);
+    json_write_int("build.json", "st_base", bs.st);
+    json_write_int("build.json", "st_regen_base", bs.st_regen);
+
+    SDL_Log("[SELECT] girl=%s base=(HP:%d ATK:%d SP:%d ST:%d regen:%d)",
+            girls[idx].id, bs.hp, bs.atk, bs.sp, bs.st, bs.st_regen);
 
     if (voice_girl[idx])
         Mix_PlayChannel(-1, voice_girl[idx], 0);
@@ -329,7 +374,7 @@ void scene_select_render(SDL_Renderer *R)
     ui_text_draw(R, font_main, "SELECT", 40, 20);
 
     int remain = (deadline_ms > SDL_GetTicks())
-                 ? (deadline_ms - SDL_GetTicks()) / 1000
+                 ? (int)((deadline_ms - SDL_GetTicks()) / 1000)
                  : 0;
 
     char buf[32];

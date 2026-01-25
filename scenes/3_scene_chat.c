@@ -1,7 +1,11 @@
 // =============================================================
 //  scenes/3_scene_chat.c
 //  Chatシーン（自動改行 + 自動スクロール + スライドイン演出）
-//  フェーズ方式（ターン制）完成版
+//  ★仕様：フェーズ廃止、残りターンのみ（TOTAL_TURNS）
+//  ★1ターンごとに15秒（TURN_LIMIT_SEC）
+//    - Enterで手動送信OK
+//    - タイムアウトで途中入力をそのまま自動送信（空なら "…"）
+//  ★全ターン終了：ログ表示 → Enterでステータス配分へ
 //  ★追加：8大感情の表情差分を左側に表示（assets/girls/<id>/portrait/<emotion>.png）
 // =============================================================
 
@@ -13,10 +17,24 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h> // atoi用
+
+// =============================================================
+// ★ここだけ触れば仕様変更できる（最重要）
+// =============================================================
+
+// 合計ターン数（= 会話の往復回数）
+#define TOTAL_TURNS 1
+
+// 1ターンの制限時間（秒）
+#define TURN_LIMIT_SEC 15.0f
+
+// intro演出時間
+#define INTRO_DURATION 3.0f
 
 // =============================================================
 // Chatログ
@@ -64,9 +82,11 @@ static const char *find_json_value(const char *json, const char *key)
         const char *end = strchr(p, '"');
         if (!end)
             return NULL;
-        size_t len = end - p;
+
+        size_t len = (size_t)(end - p);
         if (len >= sizeof(buf))
             len = sizeof(buf) - 1;
+
         memcpy(buf, p, len);
         buf[len] = 0;
         return buf;
@@ -76,9 +96,10 @@ static const char *find_json_value(const char *json, const char *key)
     while (*end && *end != ',' && *end != '}' && *end != '\n')
         end++;
 
-    size_t len = end - p;
+    size_t len = (size_t)(end - p);
     if (len >= sizeof(buf))
         len = sizeof(buf) - 1;
+
     memcpy(buf, p, len);
     buf[len] = 0;
     return buf;
@@ -96,44 +117,6 @@ typedef struct
 } ChatAIReply;
 
 // =============================================================
-// フェーズ定義
-// =============================================================
-typedef enum
-{
-    PHASE_INTRO = 0,
-    PHASE_EXPAND,
-    PHASE_DIVE,
-    PHASE_RESOLVE
-} ChatPhase;
-
-static ChatPhase g_phase = PHASE_INTRO;
-static int g_turn_left = 2;
-
-static int phase_turns(ChatPhase p)
-{
-    switch (p)
-    {
-    case PHASE_INTRO:   return 2;
-    case PHASE_EXPAND:  return 3;
-    case PHASE_DIVE:    return 5;
-    case PHASE_RESOLVE: return 2;
-    default:            return 0;
-    }
-}
-
-static const char *phase_label(ChatPhase p)
-{
-    switch (p)
-    {
-    case PHASE_INTRO:   return "フェーズ1：まずは名前を知るところから";
-    case PHASE_EXPAND:  return "フェーズ2：話を広げてみよう";
-    case PHASE_DIVE:    return "フェーズ3：一歩踏みこんでみるのも？";
-    case PHASE_RESOLVE: return "フェーズ4：君の思いを伝えよう";
-    default:            return "";
-    }
-}
-
-// =============================================================
 // girl_id -> 表示名
 // =============================================================
 static char g_char_name[64] = "She";
@@ -146,11 +129,10 @@ typedef struct
 } GirlNameMap;
 
 static const GirlNameMap g_girl_name_map[] = {
-    {"himari",  "ひまり"},
+    {"himari", "ひまり"},
     {"kiritan", "きりたん"},
-    {"sayo",    "小夜"},
-    {NULL, NULL}
-};
+    {"sayo", "小夜"},
+    {NULL, NULL}};
 
 static const char *resolve_girl_name(const char *girl_id)
 {
@@ -167,7 +149,8 @@ static const char *resolve_girl_name(const char *girl_id)
 // =============================================================
 static void unescape_json_basic_inplace(char *s)
 {
-    if (!s) return;
+    if (!s)
+        return;
 
     char *src = s;
     char *dst = s;
@@ -203,7 +186,8 @@ static void unescape_json_basic_inplace(char *s)
 
 static void normalize_newlines(char *s)
 {
-    if (!s) return;
+    if (!s)
+        return;
     for (; *s; s++)
     {
         if (*s == '\n' || *s == '\r')
@@ -235,12 +219,12 @@ static const char *g_emotion_keys[EMO_COUNT] = {
     "fear",
     "sadness",
     "anger",
-    "disgust"
-};
+    "disgust"};
 
 static int emotion_key_to_id(const char *key)
 {
-    if (!key || !key[0]) return -1;
+    if (!key || !key[0])
+        return -1;
     for (int i = 0; i < EMO_COUNT; i++)
     {
         if (strcmp(key, g_emotion_keys[i]) == 0)
@@ -287,7 +271,6 @@ static void load_portraits_for_girl(SDL_Renderer *r, const char *girl_id)
         g_portrait_by_emotion[i] = load_texture(r, path);
     }
 
-    // 初期：trust があれば trust、なければ最初に見つかったもの
     if (g_portrait_by_emotion[EMO_TRUST])
     {
         g_portrait_current_id = EMO_TRUST;
@@ -310,9 +293,9 @@ static void load_portraits_for_girl(SDL_Renderer *r, const char *girl_id)
 static void set_current_emotion(const char *emotion_key)
 {
     int id = emotion_key_to_id(emotion_key);
-    if (id < 0) return; // 失敗なら「直前維持」（neutralは作らない）
+    if (id < 0)
+        return;
 
-    // テクスチャが無い感情なら、ここでも直前維持（素材未準備でも落ちない）
     if (!g_portrait_by_emotion[id])
         return;
 
@@ -322,11 +305,13 @@ static void set_current_emotion(const char *emotion_key)
 
 static void render_texture_fit(SDL_Renderer *r, SDL_Texture *tex, SDL_Rect dst)
 {
-    if (!tex) return;
+    if (!tex)
+        return;
 
     int tw = 0, th = 0;
     SDL_QueryTexture(tex, NULL, NULL, &tw, &th);
-    if (tw <= 0 || th <= 0) return;
+    if (tw <= 0 || th <= 0)
+        return;
 
     float sx = (float)dst.w / (float)tw;
     float sy = (float)dst.h / (float)th;
@@ -338,8 +323,9 @@ static void render_texture_fit(SDL_Renderer *r, SDL_Texture *tex, SDL_Rect dst)
     SDL_Rect out = {
         dst.x + (dst.w - w) / 2,
         dst.y + (dst.h - h) / 2,
-        w, h
-    };
+        w,
+        h};
+
     SDL_RenderCopy(r, tex, NULL, &out);
 }
 
@@ -375,7 +361,7 @@ static bool call_grok_bridge(const char *msg, ChatAIReply *out)
     out->heart_delta = v ? atoi(v) : 0;
 
     v = find_json_value(json_line, "emotion");
-    // ★neutralは使わない：取れなかったら空にして「直前維持」に回す
+    // neutral廃止：取れなければ空→直前維持
     snprintf(out->emotion, sizeof(out->emotion), "%s", v ? v : "");
 
     v = find_json_value(json_line, "affection");
@@ -388,40 +374,46 @@ static bool call_grok_bridge(const char *msg, ChatAIReply *out)
 // UI / 状態
 // =============================================================
 #define CHAT_INPUT_MAX 256
-#define CHAT_DURATION 120.0f
-#define INTRO_DURATION 3.0f
 
 static TTF_Font *g_font_main = NULL;
-static TTF_Font *g_font_timer = NULL;
 static TTF_Font *g_font_aff = NULL;
 static TTF_Font *g_font_delta = NULL;
 
 static char input_buf[CHAT_INPUT_MAX];
 static int input_len = 0;
 
-static SDL_Texture *tex_white = NULL;
 static SDL_Texture *tex_intro = NULL;
 
+// HUD
 static int g_current_affection = 30;
 static int g_last_delta = 0;
-// ★neutral廃止：初期は trust
 static char g_current_emotion[64] = "trust";
 
+// intro
 static float intro_timer = 0.0f;
 static bool intro_done = false;
 
-static float g_time_left = CHAT_DURATION;
+// ターン制
+static int g_turn_done = 0;                 // 既に完了したターン数（0..TOTAL_TURNS）
+static float g_turn_time_left = TURN_LIMIT_SEC;
+
+// 終了
 static bool g_chat_ended = false;
+static bool g_end_notice_added = false;
 
 // =============================================================
 // UTF-8
 // =============================================================
 static int utf8_char_len(unsigned char c)
 {
-    if (c < 0x80) return 1;
-    if ((c >> 5) == 0x6) return 2;
-    if ((c >> 4) == 0xE) return 3;
-    if ((c >> 3) == 0x1E) return 4;
+    if (c < 0x80)
+        return 1;
+    if ((c >> 5) == 0x6)
+        return 2;
+    if ((c >> 4) == 0xE)
+        return 3;
+    if ((c >> 3) == 0x1E)
+        return 4;
     return 1;
 }
 
@@ -435,9 +427,19 @@ static void draw_text(SDL_Renderer *r, TTF_Font *font, int x, int y, const char 
 
     SDL_Color col = {255, 255, 255, 255};
     SDL_Surface *surf = TTF_RenderUTF8_Blended(font, s, col);
+    if (!surf)
+        return;
+
     SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surf);
+    if (!tex)
+    {
+        SDL_FreeSurface(surf);
+        return;
+    }
+
     SDL_Rect dst = {x, y, surf->w, surf->h};
     SDL_RenderCopy(r, tex, NULL, &dst);
+
     SDL_DestroyTexture(tex);
     SDL_FreeSurface(surf);
 }
@@ -460,8 +462,8 @@ static int wrap_text_internal(SDL_Renderer *r, TTF_Font *font,
         int clen = utf8_char_len((unsigned char)*p);
 
         char candidate[1024];
-        memcpy(candidate, line, line_len);
-        memcpy(candidate + line_len, p, clen);
+        memcpy(candidate, line, (size_t)line_len);
+        memcpy(candidate + line_len, p, (size_t)clen);
         candidate[line_len + clen] = '\0';
 
         int w;
@@ -478,7 +480,7 @@ static int wrap_text_internal(SDL_Renderer *r, TTF_Font *font,
             continue;
         }
 
-        memcpy(line, candidate, line_len + clen);
+        memcpy(line, candidate, (size_t)(line_len + clen));
         line_len += clen;
         line[line_len] = '\0';
         p += clen;
@@ -517,72 +519,106 @@ static void build_line_with_prefix(char *out, size_t out_sz, const ChatLine *ln)
         return;
 
     if (ln->type == CHAT_USER)
-    {
         snprintf(out, out_sz, "You: %s", ln->text);
-    }
     else if (ln->type == CHAT_CHAR)
-    {
         snprintf(out, out_sz, "%s: %s", g_char_name, ln->text);
-    }
     else
-    {
         snprintf(out, out_sz, "%s", ln->text);
-    }
 }
 
 // =============================================================
-// チャット送信（フェーズ制）
+// 終了導線ログ（1回だけ）
+// =============================================================
+static void add_end_notice_once(void)
+{
+    if (g_end_notice_added)
+        return;
+
+    if (chat_line_count < CHAT_MAX)
+    {
+        chat_lines[chat_line_count++] =
+            (ChatLine){CHAT_SYSTEM, "── 会話終了：Enterでステータス配分へ ──"};
+    }
+    g_end_notice_added = true;
+}
+
+// =============================================================
+// ターン残数
+// =============================================================
+static int turns_left(void)
+{
+    int left = TOTAL_TURNS - g_turn_done;
+    if (left < 0)
+        left = 0;
+    return left;
+}
+
+// =============================================================
+// チャット送信（ターン制）
+// - Enter送信：scene_chat_updateから呼ぶ
+// - タイムアウト送信：scene_chat_updateから呼ぶ
 // =============================================================
 static void chat_send_message(const char *msg)
 {
-    if (!msg || !msg[0])
+    if (g_chat_ended)
         return;
+
+    // ターンが尽きているなら終了扱い
+    if (g_turn_done >= TOTAL_TURNS)
+    {
+        g_chat_ended = true;
+        add_end_notice_once();
+        return;
+    }
+
+    // 空なら "…" を送る（進行停止防止）
+    char send_buf[CHAT_INPUT_MAX];
+    if (!msg || !msg[0])
+        snprintf(send_buf, sizeof(send_buf), "…");
+    else
+        snprintf(send_buf, sizeof(send_buf), "%s", msg);
 
     if (chat_line_count >= CHAT_MAX - 2)
         return;
 
+    // ユーザー発言
     chat_lines[chat_line_count++] = (ChatLine){CHAT_USER, ""};
-    snprintf(chat_lines[chat_line_count - 1].text, 512, "%s", msg);
+    snprintf(chat_lines[chat_line_count - 1].text, 512, "%s", send_buf);
 
+    // AI呼び出し（ブロッキング）
     ChatAIReply ai = {0};
-    call_grok_bridge(msg, &ai);
+    call_grok_bridge(send_buf, &ai);
 
     g_last_delta = ai.heart_delta;
     g_current_affection = ai.affection;
 
-    // ★感情：8大感情のみ。取れなかったら直前維持。
+    // 感情：取れなければ直前維持
     if (ai.emotion[0])
     {
         snprintf(g_current_emotion, sizeof(g_current_emotion), "%s", ai.emotion);
         set_current_emotion(g_current_emotion);
     }
 
-    if (chat_line_count >= CHAT_MAX)
-        return;
-
-    chat_lines[chat_line_count++] = (ChatLine){CHAT_CHAR, ""};
-    snprintf(chat_lines[chat_line_count - 1].text, 512, "%s", ai.text);
-
-    g_turn_left--;
-
-    if (g_turn_left <= 0)
+    // AI返答
+    if (chat_line_count < CHAT_MAX)
     {
-        if (g_phase < PHASE_RESOLVE)
-        {
-            g_phase++;
-            g_turn_left = phase_turns(g_phase);
-
-            if (chat_line_count < CHAT_MAX)
-            {
-                chat_lines[chat_line_count++] =
-                    (ChatLine){CHAT_SYSTEM, "── フェーズが進行した ──"};
-            }
-        }
-        else
-        {
-            g_chat_ended = true;
-        }
+        chat_lines[chat_line_count++] = (ChatLine){CHAT_CHAR, ""};
+        snprintf(chat_lines[chat_line_count - 1].text, 512, "%s", ai.text);
     }
+
+    // ★ターン消費（往復が完了したら1ターン）
+    g_turn_done++;
+
+    // 次ターンがあるなら15秒をリセット
+    if (g_turn_done < TOTAL_TURNS)
+    {
+        g_turn_time_left = TURN_LIMIT_SEC;
+        return;
+    }
+
+    // ここまで来たら会話終了
+    g_chat_ended = true;
+    add_end_notice_once();
 }
 
 // =============================================================
@@ -592,7 +628,7 @@ void scene_chat_enter(void)
 {
     SDL_StartTextInput();
 
-    // build.json から girl_id を1回だけ読み、表示名に解決
+    // build.json から girl_id を読み、表示名に解決
     {
         FILE *fp = fopen("build.json", "r");
         if (fp)
@@ -612,36 +648,32 @@ void scene_chat_enter(void)
         }
     }
 
+    // フォント（あなたのCHATに合わせて main.ttf）
     g_font_main = TTF_OpenFont("assets/font/main.ttf", 26);
-    g_font_timer = TTF_OpenFont("assets/font/main.ttf", 36);
     g_font_aff = TTF_OpenFont("assets/font/main.ttf", 28);
     g_font_delta = TTF_OpenFont("assets/font/main.ttf", 28);
 
-    tex_white = SDL_CreateTexture(g_renderer,
-                                 SDL_PIXELFORMAT_RGBA8888,
-                                 SDL_TEXTUREACCESS_TARGET,
-                                 1, 1);
-    SDL_SetRenderTarget(g_renderer, tex_white);
-    SDL_SetRenderDrawColor(g_renderer, 200, 200, 255, 255);
-    SDL_RenderClear(g_renderer);
-    SDL_SetRenderTarget(g_renderer, NULL);
-
+    // intro
     tex_intro = load_texture(g_renderer, "assets/ui/chat_start.png");
-
     intro_timer = 0.0f;
     intro_done = false;
+
+    // 入力
     input_buf[0] = '\0';
     input_len = 0;
 
-    g_time_left = CHAT_DURATION;
-    g_chat_ended = false;
-
+    // ログ
     chat_line_count = 0;
-    g_phase = PHASE_INTRO;
-    g_turn_left = phase_turns(g_phase);
 
-    // ★追加：表情差分のロード（左ペイン用）
-    // 初期感情は trust（neutralなし）
+    // ターン制初期化
+    g_turn_done = 0;
+    g_turn_time_left = TURN_LIMIT_SEC;
+
+    // 終了
+    g_chat_ended = false;
+    g_end_notice_added = false;
+
+    // 表情差分
     snprintf(g_current_emotion, sizeof(g_current_emotion), "%s", "trust");
     load_portraits_for_girl(g_renderer, g_girl_id);
     set_current_emotion(g_current_emotion);
@@ -654,15 +686,16 @@ void scene_chat_leave(void)
 {
     SDL_StopTextInput();
 
-    if (g_font_main) TTF_CloseFont(g_font_main);
-    if (g_font_timer) TTF_CloseFont(g_font_timer);
-    if (g_font_aff) TTF_CloseFont(g_font_aff);
-    if (g_font_delta) TTF_CloseFont(g_font_delta);
+    if (g_font_main)
+        TTF_CloseFont(g_font_main);
+    if (g_font_aff)
+        TTF_CloseFont(g_font_aff);
+    if (g_font_delta)
+        TTF_CloseFont(g_font_delta);
 
-    if (tex_white) SDL_DestroyTexture(tex_white);
-    if (tex_intro) SDL_DestroyTexture(tex_intro);
+    if (tex_intro)
+        SDL_DestroyTexture(tex_intro);
 
-    // ★追加：表情差分 解放
     unload_portraits();
 }
 
@@ -679,17 +712,19 @@ void scene_chat_update(float dt)
         return;
     }
 
-    if (!g_chat_ended)
+    // 終了後：EnterでALLOCATEへ
+    if (g_chat_ended)
     {
-        g_time_left -= dt;
-        if (g_time_left <= 0)
-        {
-            g_time_left = 0;
-            g_chat_ended = true;
-            return;
-        }
+        add_end_notice_once();
+        if (input_is_pressed(SDL_SCANCODE_RETURN))
+            change_scene(SCENE_ALLOCATE);
+        return;
     }
 
+    // 15秒減算（入力中のみ）
+    g_turn_time_left -= dt;
+
+    // 入力
     const char *typed = input_get_text();
     if (typed && input_len + (int)strlen(typed) < CHAT_INPUT_MAX - 1)
     {
@@ -703,11 +738,23 @@ void scene_chat_update(float dt)
         input_buf[input_len] = '\0';
     }
 
-    if (input_is_pressed(SDL_SCANCODE_RETURN) && input_len > 0)
+    // ★手動送信（空でもOK：内部で "…" になる）
+    if (input_is_pressed(SDL_SCANCODE_RETURN))
     {
         chat_send_message(input_buf);
         input_buf[0] = '\0';
         input_len = 0;
+        return;
+    }
+
+    // ★自動送信（途中入力をそのまま）
+    if (g_turn_time_left <= 0.0f)
+    {
+        g_turn_time_left = 0.0f;
+        chat_send_message(input_buf);
+        input_buf[0] = '\0';
+        input_len = 0;
+        return;
     }
 }
 
@@ -716,14 +763,15 @@ void scene_chat_update(float dt)
 // =============================================================
 void scene_chat_render(SDL_Renderer *r)
 {
-    // スライドイン演出
+    // intro演出
     if (!intro_done)
     {
         if (tex_intro)
         {
             int w = 500, h = 500;
             float t = intro_timer / INTRO_DURATION;
-            if (t > 1.0f) t = 1.0f;
+            if (t > 1.0f)
+                t = 1.0f;
 
             float pos_x = -w + (1280 + w) * t;
             int pos_y = 180;
@@ -737,33 +785,31 @@ void scene_chat_render(SDL_Renderer *r)
     SDL_SetRenderDrawColor(r, 32, 32, 32, 255);
     SDL_RenderClear(r);
 
-    draw_text(r, g_font_aff, 10, 20, phase_label(g_phase));
+    // 左上：残りターンだけ
+    char tmp[128];
+    snprintf(tmp, sizeof(tmp), "残りターン：%d", turns_left());
+    draw_text(r, g_font_aff, 10, 20, tmp);
 
-    char tmp[64];
-    snprintf(tmp, sizeof(tmp), "残りターン：%d", g_turn_left);
-    draw_text(r, g_font_aff, 10, 50, tmp);
+    // 15秒（右上）
+    {
+        int sec = (int)(g_turn_time_left + 0.999f);
+        if (sec < 0)
+            sec = 0;
+        snprintf(tmp, sizeof(tmp), "残り %02d 秒", sec);
+        draw_text(r, g_font_aff, 1050, 60, tmp);
+    }
 
     // =============================================================
-    // ★追加：左ペイン（表情差分）
+    // 左ペイン（表情差分）
     // =============================================================
-    // 左ペイン領域：ロゴ/テキストを邪魔しない位置に固定
     SDL_Rect leftPane = {20, 100, 300, 500};
-
     SDL_SetRenderDrawColor(r, 40, 40, 40, 255);
     SDL_RenderFillRect(r, &leftPane);
 
-    // 現在感情（デバッグ表示したいなら）
-    // draw_text(r, g_font_main, 30, 110, g_current_emotion);
-
     if (g_portrait_current)
-    {
         render_texture_fit(r, g_portrait_current, leftPane);
-    }
     else
-    {
-        // 素材が無い場合のフォールバック
         draw_text(r, g_font_main, 30, 330, "No portrait");
-    }
 
     // =============================================================
     // ログ領域
@@ -784,8 +830,7 @@ void scene_chat_render(SDL_Renderer *r)
         build_line_with_prefix(buf, sizeof(buf), &chat_lines[i]);
         normalize_newlines(buf);
 
-        heights[i] = measure_text_wrap_height(
-            g_font_main, max_width, buf, line_spacing);
+        heights[i] = measure_text_wrap_height(g_font_main, max_width, buf, line_spacing);
         total_h += heights[i];
     }
 
@@ -823,5 +868,9 @@ void scene_chat_render(SDL_Renderer *r)
     SDL_Rect box = {20, 620, 1240, 50};
     SDL_SetRenderDrawColor(r, 60, 60, 60, 255);
     SDL_RenderFillRect(r, &box);
-    draw_text(r, g_font_main, 30, 630, input_buf);
+
+    if (!g_chat_ended)
+        draw_text(r, g_font_main, 30, 630, input_buf);
+    else
+        draw_text(r, g_font_main, 30, 630, "Enterでステータス配分へ");
 }
