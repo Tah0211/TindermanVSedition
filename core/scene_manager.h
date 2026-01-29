@@ -9,7 +9,8 @@ typedef enum
     SCENE_SELECT,
     SCENE_CHAT,
     SCENE_ALLOCATE,
-    SCENE_BATTLE,   // ★追加
+    SCENE_BATTLE,
+    SCENE_MAX
 } SceneID;
 
 

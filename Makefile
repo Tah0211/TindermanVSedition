@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -O2 -std=c11 `sdl2-config --cflags`
+CFLAGS = -Wall -O2 -std=c11 -I. `sdl2-config --cflags`
 LDFLAGS = `sdl2-config --libs` -lSDL2_image -lSDL2_ttf -lSDL2_mixer -lm
 
 # ===============================
@@ -16,6 +16,12 @@ SRC = \
     scenes/3_scene_chat.c \
     scenes/4_scene_allocate.c \
     scenes/5_scene_battle.c \
+    \
+    battle/battle_cmd.c \
+    battle/battle_skills.c \
+    battle/char_defs.c \
+    battle/battle_core.c \
+    battle/cutin.c \
     \
     ui/ui_button.c \
     ui/ui_card.c \

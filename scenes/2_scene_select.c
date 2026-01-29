@@ -1,3 +1,4 @@
+// scenes/2_scene_select.c
 #include "2_scene_select.h"
 #include "../core/scene_manager.h"
 #include "../core/input.h"
@@ -74,6 +75,23 @@ static BaseStats base_stats_by_index(int idx)
 }
 
 // ==============================================================
+// 移動距離（基礎）
+//   - himari: 6マス
+//   - kiritan: 3マス
+//   - sayo:   暫定（必要なら変更）
+// ==============================================================
+static int move_range_by_index(int idx)
+{
+    switch (idx)
+    {
+    case 0: return 6; // himari
+    case 1: return 3; // kiritan
+    case 2: return 4; // sayo（暫定。0でも可）
+    default: return 3;
+    }
+}
+
+// ==============================================================
 // ステート
 // ==============================================================
 static SDL_Texture *tex_portrait[3];
@@ -99,8 +117,8 @@ static float glow_t = 0.0f;
 
 // ==============================================================
 // build.json 初期化（状態枠を必ず作る）
-//   - morale(戦意) は廃止したので出力しない
 //   - statsはネストせず、トップレベルに base/add を置く（json util の互換性優先）
+//   - 移動距離(move_range_base)もここで枠を作り、SELECT確定で上書きする
 // ==============================================================
 static void reset_build_json(void)
 {
@@ -129,13 +147,16 @@ static void reset_build_json(void)
     fputs("  \"st_base\": 0,\n", fp);
     fputs("  \"st_regen_base\": 0,\n", fp);
 
+    // --- 移動距離（SELECT確定で上書き） ---
+    fputs("  \"move_range_base\": 0,\n", fp);
+
     // --- 配分分（ALLOCATEで増やす） ---
     fputs("  \"hp_add\": 0,\n", fp);
     fputs("  \"atk_add\": 0,\n", fp);
     fputs("  \"sp_add\": 0,\n", fp);
     fputs("  \"st_add\": 0,\n", fp);
 
-    // skills
+    // skills（末尾なのでカンマ無し）
     fputs("  \"skills\": []\n", fp);
     fputs("}\n", fp);
 
@@ -149,9 +170,9 @@ static void reset_build_json(void)
 static SDL_Color lerp_color(SDL_Color a, SDL_Color b, float t)
 {
     SDL_Color c;
-    c.r = a.r + (b.r - a.r) * t;
-    c.g = a.g + (b.g - a.g) * t;
-    c.b = a.b + (b.b - a.b) * t;
+    c.r = (Uint8)(a.r + (b.r - a.r) * t);
+    c.g = (Uint8)(a.g + (b.g - a.g) * t);
+    c.b = (Uint8)(a.b + (b.b - a.b) * t);
     c.a = 255;
     return c;
 }
@@ -161,7 +182,7 @@ static SDL_Color lerp_color(SDL_Color a, SDL_Color b, float t)
 // ==============================================================
 static void get_spark_pos(SDL_Rect dst, float t, float *ox, float *oy)
 {
-    float x = dst.x, y = dst.y, w = dst.w, h = dst.h;
+    float x = (float)dst.x, y = (float)dst.y, w = (float)dst.w, h = (float)dst.h;
     t = fmodf(t, 1.0f);
 
     if (t < 0.25f)
@@ -236,21 +257,18 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
                 tex_spark,
                 (Uint8)(col.r * intensity),
                 (Uint8)(col.g * intensity),
-                (Uint8)(col.b * intensity)
-            );
+                (Uint8)(col.b * intensity));
 
             SDL_SetTextureAlphaMod(
                 tex_spark,
-                (Uint8)(255 * powf(intensity, 1.8f))
-            );
+                (Uint8)(255 * powf(intensity, 1.8f)));
 
             float size = size_base * (0.55f + 0.45f * intensity);
             SDL_Rect sp = {
                 (int)(cx - size / 2),
                 (int)(cy - size / 2),
                 (int)size,
-                (int)size
-            };
+                (int)size};
 
             SDL_RenderCopy(R, tex_spark, NULL, &sp);
         }
@@ -262,7 +280,7 @@ static void draw_neon_frame(SDL_Renderer *R, SDL_Rect dst, float t)
 // 選択確定
 //   - girl_id を書く
 //   - キャラ別の基礎ステを build.json に注入
-//   - 戦意(morale)は廃止したので一切触らない
+//   - 移動距離(move_range_base)も注入
 // ==============================================================
 static void finalize_selection(void)
 {
@@ -285,8 +303,12 @@ static void finalize_selection(void)
     json_write_int("build.json", "st_base", bs.st);
     json_write_int("build.json", "st_regen_base", bs.st_regen);
 
-    SDL_Log("[SELECT] girl=%s base=(HP:%d ATK:%d SP:%d ST:%d regen:%d)",
-            girls[idx].id, bs.hp, bs.atk, bs.sp, bs.st, bs.st_regen);
+    // キャラ別 移動距離注入
+    int mv = move_range_by_index(idx);
+    json_write_int("build.json", "move_range_base", mv);
+
+    SDL_Log("[SELECT] girl=%s base=(HP:%d ATK:%d SP:%d ST:%d regen:%d) move=%d",
+            girls[idx].id, bs.hp, bs.atk, bs.sp, bs.st, bs.st_regen, mv);
 
     if (voice_girl[idx])
         Mix_PlayChannel(-1, voice_girl[idx], 0);
@@ -393,8 +415,7 @@ void scene_select_render(SDL_Renderer *R)
         SDL_Rect dst = {
             base_x + 160 - w / 2,
             base_y + 240 - h / 2,
-            w, h
-        };
+            w, h};
 
         if (tex_portrait[i])
             SDL_RenderCopy(R, tex_portrait[i], NULL, &dst);
@@ -410,8 +431,7 @@ void scene_select_render(SDL_Renderer *R)
             SDL_Rect icon_dst = {
                 dst.x + dst.w / 2 - 60,
                 dst.y - 60,
-                120, 120
-            };
+                120, 120};
             SDL_RenderCopy(R, tex_selected_icon, NULL, &icon_dst);
         }
     }
