@@ -645,12 +645,6 @@ static void exec_update(float dt)
 
         // ★regenを char_defs に統一
         apply_st_regen_after_step();
-
-        if (g_core.last_executed_skill_id && g_cutin.renderer) {
-            const char *mp4 = battle_skill_movie_path(g_core.last_executed_skill_id);
-            cutin_play_fullscreen_mpv(&g_cutin, mp4, 200, true);
-        }
-
         memset(&g_p1_cmd, 0, sizeof(g_p1_cmd));
         memset(&g_p2_cmd, 0, sizeof(g_p2_cmd));
         g_p1_locked = false;
@@ -716,9 +710,23 @@ static void exec_update(float dt)
 
     if (g_exec_stage == EXE_ACT) {
         if (g_act_pause_left <= 0.0f) {
+            // ★方針1：アクション直後に演出を流す
+            // 残りカス誤再生を防ぐ（射程外・不発では last_executed を立てない想定）
+            g_core.last_executed_skill_id = NULL;
+
             battle_core_exec_act_for_unit(&g_core, ui);
-            // 第1段階：いったん即時適用（第2段階でmp4後に呼ぶ）
+
+            // このアクションで成立した技があれば、ここで再生
+            if (g_core.last_executed_skill_id && g_cutin.renderer) {
+                const char *mp4 = battle_skill_movie_path(g_core.last_executed_skill_id);
+                if (mp4 && mp4[0]) {
+                    cutin_play_fullscreen_mpv(&g_cutin, mp4, 200, true);
+                }
+            }
+
+            // 効果適用（HP/ST等）
             battle_core_apply_events(&g_core);
+
             g_act_pause_left = g_act_pause_sec;
             return;
         }
