@@ -1,19 +1,18 @@
 {
-  "girl_id": "kiritan",
-  "affection": 29,
+  "girl_id": "",
+  "affection": 30,
   "phase": 0,
   "turn_in_phase": 0,
   "core_used": false,
-  "hp_base": 100,
-  "atk_base": 5,
-  "sp_base": 8,
-  "st_base": 40,
-  "st_regen_base": 20,
-  "move_range_base": 3,
+  "hp_base": 0,
+  "atk_base": 0,
+  "sp_base": 0,
+  "st_base": 0,
+  "st_regen_base": 0,
+  "move_range_base": 0,
   "hp_add": 0,
   "atk_add": 0,
   "sp_add": 0,
   "st_add": 0,
-  "skills": [],
-  "tag_learned": 0
+  "skills": []
 }
