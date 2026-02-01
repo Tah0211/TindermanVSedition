@@ -94,6 +94,8 @@ static void push_anim(BattleCore *b, int actor_ui, int target_ui, const char *sk
 
     // 互換：scene側が「最後に成立した技」を参照している場合に備えて入れておく
     b->last_executed_skill_id = skill_id;
+    b->last_executed_actor_ui = actor_ui;
+    b->last_executed_target_ui = target_ui;
 }
 
 static void push_damage(BattleCore *b, int actor_ui, int target_ui, int dmg) {
@@ -398,6 +400,8 @@ bool battle_core_init(
     b->phase = BPHASE_INPUT;
     b->turn = 1;
     b->last_executed_skill_id = NULL;
+    b->last_executed_actor_ui = -1;
+    b->last_executed_target_ui = -1;
     b->_exec_active = false;
     b->ev_count = 0;
 
@@ -478,6 +482,8 @@ bool battle_core_begin_exec(BattleCore *b) {
 
     b->phase = BPHASE_RESOLVE;
     b->last_executed_skill_id = NULL;
+    b->last_executed_actor_ui = -1;
+    b->last_executed_target_ui = -1;
     b->_exec_active = true;
     battle_core_clear_events(b);
     return true;
@@ -538,6 +544,8 @@ bool battle_core_step(BattleCore *b) {
 
     b->phase = BPHASE_RESOLVE;
     b->last_executed_skill_id = NULL;
+    b->last_executed_actor_ui = -1;
+    b->last_executed_target_ui = -1;
 
     // 1) move
     apply_move_if_any(b, TEAM_P1, SLOT_HERO, &b->_pending_cmd[TEAM_P1].cmd[SLOT_HERO]);

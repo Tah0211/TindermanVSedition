@@ -58,6 +58,9 @@ typedef struct {
 
     // （互換）scene側が参照しているなら維持
     const char *last_executed_skill_id;
+    int last_executed_actor_ui;
+    int last_executed_target_ui;
+
 
     TurnCmd _pending_cmd[2];
     bool    _has_cmd[2];

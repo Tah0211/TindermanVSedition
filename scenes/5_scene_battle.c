@@ -18,6 +18,7 @@
 #include <string.h>
 #include <stdlib.h> // abs
 #include <math.h>   // fabsf, roundf, expf, lroundf
+#include <unistd.h> // access
 
 
 // ===============================
@@ -35,6 +36,56 @@ static bool g_inited = false;
 //  Cutin context（演出）
 // ===============================
 static CutinContext g_cutin;
+
+// ===============================
+//  Cutin mp4 path（技×対象キャラ差分）
+//  assets/cutin/<skill_id>/vs_<target_char_id>.mp4
+//  fallback: assets/cutin/<skill_id>/default.mp4 -> assets/cutin/default.mp4 -> battle_skill_movie_path(skill_id)
+// ===============================
+static const char* safe_char_id_from_ui(int ui)
+{
+    if (ui < 0 || ui >= 4) return NULL;
+    const Unit *u = &g_core.units[ui];
+    // 死亡ユニットでも「誰だったか」で差分したい場合は alive 判定を外してもよい
+    if (!u->alive) return u->char_id; // ここはID取得優先
+    return u->char_id;
+}
+
+static const char* choose_cutin_mp4(const char *skill_id, int target_ui, char *out, size_t out_sz)
+{
+    if (!out || out_sz == 0) return NULL;
+    out[0] = '\0';
+
+    if (!skill_id || !skill_id[0]) return NULL;
+
+    const char *tgt = safe_char_id_from_ui(target_ui);
+
+    // 1) assets/cutin/<skill_id>/vs_<target>.mp4（単体/カウンター）
+    if (tgt && tgt[0]) {
+        snprintf(out, out_sz, "assets/cutin/%s/vs_%s.mp4", skill_id, tgt);
+        if (access(out, R_OK) == 0) return out;
+    }
+
+    // 2) assets/cutin/<skill_id>/default.mp4（技共通）
+    snprintf(out, out_sz, "assets/cutin/%s/default.mp4", skill_id);
+    if (access(out, R_OK) == 0) return out;
+
+    // 3) assets/cutin/default.mp4（全体共通）
+    snprintf(out, out_sz, "assets/cutin/default.mp4");
+    if (access(out, R_OK) == 0) return out;
+
+    // 4) 既存の解決（互換）
+    {
+        const char *p = battle_skill_movie_path(skill_id);
+        if (p && p[0]) {
+            snprintf(out, out_sz, "%s", p);
+            return out;
+        }
+    }
+
+    return NULL;
+}
+
 
 // ===============================
 //  ローカル宣言（いまはローカル用）
@@ -713,12 +764,19 @@ static void exec_update(float dt)
             // ★方針1：アクション直後に演出を流す
             // 残りカス誤再生を防ぐ（射程外・不発では last_executed を立てない想定）
             g_core.last_executed_skill_id = NULL;
+            g_core.last_executed_actor_ui = -1;
+            g_core.last_executed_target_ui = -1;
 
             battle_core_exec_act_for_unit(&g_core, ui);
 
-            // このアクションで成立した技があれば、ここで再生
+            // このアクションで成立した技があれば、ここで再生（技×対象キャラ差分）
             if (g_core.last_executed_skill_id && g_cutin.renderer) {
-                const char *mp4 = battle_skill_movie_path(g_core.last_executed_skill_id);
+                char mp4buf[256];
+                const char *mp4 = choose_cutin_mp4(
+                    g_core.last_executed_skill_id,
+                    g_core.last_executed_target_ui,
+                    mp4buf, sizeof(mp4buf)
+                );
                 if (mp4 && mp4[0]) {
                     cutin_play_fullscreen_mpv(&g_cutin, mp4, 200, true);
                 }
