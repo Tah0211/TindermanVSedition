@@ -1,18 +1,19 @@
 {
-  "girl_id": "",
-  "affection": 30,
+  "girl_id": "himari",
+  "affection": 28,
   "phase": 0,
   "turn_in_phase": 0,
   "core_used": false,
-  "hp_base": 0,
-  "atk_base": 0,
-  "sp_base": 0,
-  "st_base": 0,
-  "st_regen_base": 0,
-  "move_range_base": 0,
+  "hp_base": 120,
+  "atk_base": 20,
+  "sp_base": 14,
+  "st_base": 80,
+  "st_regen_base": 5,
+  "move_range_base": 6,
   "hp_add": 0,
   "atk_add": 0,
   "sp_add": 0,
   "st_add": 0,
-  "skills": []
+  "skills": [],
+  "tag_learned": 0
 }

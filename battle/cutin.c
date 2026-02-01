@@ -18,6 +18,7 @@ static void pump_events_non_consuming(void)
     SDL_PumpEvents();
 }
 
+// （現状未使用だが、将来フェード等の拡張で使えるので残す）
 static uint8_t clamp_u8(int v)
 {
     if (v < 0) return 0;
@@ -104,6 +105,28 @@ static bool has_any_mpv(void)
     return has_bundled_mpv() || has_system_mpv();
 }
 
+// 既存LD_LIBRARY_PATHを壊さず、同梱libを先頭に追加
+static void prepend_ld_library_path(const char* add_path)
+{
+    if (!add_path || !add_path[0]) return;
+
+    const char* old = getenv("LD_LIBRARY_PATH");
+    if (!old || !old[0]) {
+        setenv("LD_LIBRARY_PATH", add_path, 1);
+        return;
+    }
+
+    // add_path + ":" + old
+    // 1024を超えるなら古いものを捨てて add_path のみ
+    char buf[1024];
+    int n = snprintf(buf, sizeof(buf), "%s:%s", add_path, old);
+    if (n <= 0 || n >= (int)sizeof(buf)) {
+        setenv("LD_LIBRARY_PATH", add_path, 1);
+        return;
+    }
+    setenv("LD_LIBRARY_PATH", buf, 1);
+}
+
 // mpv を別プロセスで起動して pid を返す。失敗で -1。
 static pid_t spawn_mpv_fullscreen_ex(const char* movie_path, bool flip_h)
 {
@@ -115,8 +138,8 @@ static pid_t spawn_mpv_fullscreen_ex(const char* movie_path, bool flip_h)
 
         const char* exec_path = use_bundled ? "./tools/mpv/mpv" : "mpv";
         if (use_bundled) {
-            // 同梱libを優先
-            setenv("LD_LIBRARY_PATH", "./tools/mpv/lib", 1);
+            // 同梱libを優先（既存を壊さず先頭に追加）
+            prepend_ld_library_path("./tools/mpv/lib");
         }
 
         // 依存が増える hwdec は切る（大学PCで詰みにくくする）

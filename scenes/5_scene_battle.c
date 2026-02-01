@@ -46,8 +46,7 @@ static const char* safe_char_id_from_ui(int ui)
 {
     if (ui < 0 || ui >= 4) return NULL;
     const Unit *u = &g_core.units[ui];
-    // 死亡ユニットでも「誰だったか」で差分したい場合は alive 判定を外してもよい
-    if (!u->alive) return u->char_id; // ここはID取得優先
+    if (!u->char_id) return NULL;
     return u->char_id;
 }
 
@@ -60,17 +59,17 @@ static const char* choose_cutin_mp4(const char *skill_id, int target_ui, char *o
 
     const char *tgt = safe_char_id_from_ui(target_ui);
 
-    // 1) assets/cutin/<skill_id>/vs_<target>.mp4（単体/カウンター）
+    // 1) assets/cutin/<skill_id>/vs_<target>.mp4
     if (tgt && tgt[0]) {
         snprintf(out, out_sz, "assets/cutin/%s/vs_%s.mp4", skill_id, tgt);
         if (access(out, R_OK) == 0) return out;
     }
 
-    // 2) assets/cutin/<skill_id>/default.mp4（技共通）
+    // 2) assets/cutin/<skill_id>/default.mp4
     snprintf(out, out_sz, "assets/cutin/%s/default.mp4", skill_id);
     if (access(out, R_OK) == 0) return out;
 
-    // 3) assets/cutin/default.mp4（全体共通）
+    // 3) assets/cutin/default.mp4
     snprintf(out, out_sz, "assets/cutin/default.mp4");
     if (access(out, R_OK) == 0) return out;
 
@@ -85,7 +84,6 @@ static const char* choose_cutin_mp4(const char *skill_id, int target_ui, char *o
 
     return NULL;
 }
-
 
 // ===============================
 //  ローカル宣言（いまはローカル用）
@@ -769,19 +767,16 @@ static void exec_update(float dt)
 
             battle_core_exec_act_for_unit(&g_core, ui);
 
-            // このアクションで成立した技があれば、ここで再生（技×対象キャラ差分）
+            // このアクションで成立した技があれば、ここで再生（対象キャラ差分）
             if (g_core.last_executed_skill_id && g_cutin.renderer) {
                 char mp4buf[256];
-                const char *mp4 = choose_cutin_mp4(
-                    g_core.last_executed_skill_id,
-                    g_core.last_executed_target_ui,
-                    mp4buf, sizeof(mp4buf)
-                );
+                const char *mp4 = choose_cutin_mp4(g_core.last_executed_skill_id,
+                                                g_core.last_executed_target_ui,
+                                                mp4buf, sizeof(mp4buf));
                 if (mp4 && mp4[0]) {
                     cutin_play_fullscreen_mpv(&g_cutin, mp4, 200, true);
                 }
             }
-
             // 効果適用（HP/ST等）
             battle_core_apply_events(&g_core);
 
@@ -1725,6 +1720,30 @@ void scene_battle_render(SDL_Renderer *r)
             }
         }
     }
+
+    // ===============================
+    // 終了表示（勝者表示）
+    // ===============================
+    if (g_core.phase == BPHASE_END) {
+        bool p1_dead = (!g_core.units[0].alive) && (!g_core.units[1].alive);
+        bool p2_dead = (!g_core.units[2].alive) && (!g_core.units[3].alive);
+
+        const char *msg = "DRAW";
+        if (p1_dead && !p2_dead) msg = "2P WIN";
+        else if (p2_dead && !p1_dead) msg = "1P WIN";
+
+        // うっすら暗幕
+        set_color(r, 0, 0, 0, 160);
+        SDL_Rect veil = {0, 0, 1280, 720};
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        SDL_RenderFillRect(r, &veil);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+
+        // テキスト（ざっくり中央寄せ）
+        ui_text_draw(r, g_font, msg, 560, 320);
+        ui_text_draw(r, g_font, "Enter: HOME", 520, 370);
+    }
+
 
     SDL_RenderPresent(r);
 }
