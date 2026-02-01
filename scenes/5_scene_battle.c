@@ -838,6 +838,92 @@ static void draw_move_highlight(SDL_Renderer *r,
     SDL_SetRenderDrawBlendMode(r, prev);
 }
 
+
+// ===============================
+//  攻撃射程 / 範囲ハイライト（半透明赤）
+// ===============================
+static bool is_in_manhattan_range(Pos a, Pos b, int range)
+{
+    int dx = abs((int)a.x - (int)b.x);
+    int dy = abs((int)a.y - (int)b.y);
+    return (dx + dy) <= range;
+}
+
+static void draw_range_highlight_red(SDL_Renderer *r,
+                                     int origin_x, int origin_y, int cell,
+                                     const Pos from, int range,
+                                     Uint8 R, Uint8 G, Uint8 B, Uint8 A)
+{
+    if (range < 0) return; // 射程∞は表示しない（判定もスキップ扱い）
+    SDL_BlendMode prev;
+    SDL_GetRenderDrawBlendMode(r, &prev);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W; x++) {
+            Pos p = {(int8_t)x, (int8_t)y};
+            if (!is_in_manhattan_range(from, p, range)) continue;
+
+            int px = origin_x + x * cell;
+            int py = origin_y + y * cell;
+            SDL_Rect rc = { px + 1, py + 1, cell - 2, cell - 2 };
+            set_color(r, R, G, B, A);
+            SDL_RenderFillRect(r, &rc);
+        }
+    }
+
+    SDL_SetRenderDrawBlendMode(r, prev);
+}
+
+static void draw_aoe_area_red(SDL_Renderer *r,
+                              int origin_x, int origin_y, int cell,
+                              const Pos center, int radius,
+                              Uint8 R, Uint8 G, Uint8 B, Uint8 A)
+{
+    if (radius < 0) return;
+    SDL_BlendMode prev;
+    SDL_GetRenderDrawBlendMode(r, &prev);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W; x++) {
+            Pos p = {(int8_t)x, (int8_t)y};
+            if (!is_in_manhattan_range(center, p, radius)) continue;
+
+            int px = origin_x + x * cell;
+            int py = origin_y + y * cell;
+            SDL_Rect rc = { px + 1, py + 1, cell - 2, cell - 2 };
+            set_color(r, R, G, B, A);
+            SDL_RenderFillRect(r, &rc);
+        }
+    }
+
+    SDL_SetRenderDrawBlendMode(r, prev);
+}
+
+static void draw_center_box(SDL_Renderer* r, int origin_x, int origin_y, int cell, Pos p,
+                            Uint8 R, Uint8 G, Uint8 B, Uint8 A)
+{
+    int gx = (int)p.x, gy = (int)p.y;
+    if (gx < 0 || gx >= GRID_W || gy < 0 || gy >= GRID_H) return;
+
+    int px = origin_x + gx * cell;
+    int py = origin_y + gy * cell;
+
+    SDL_Rect rc = { px + 1, py + 1, cell - 2, cell - 2 };
+
+    SDL_BlendMode prev;
+    SDL_GetRenderDrawBlendMode(r, &prev);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    SDL_SetRenderDrawColor(r, R, G, B, A);
+    SDL_RenderDrawRect(r, &rc);
+    rc.x++; rc.y++; rc.w -= 2; rc.h -= 2;
+    SDL_RenderDrawRect(r, &rc);
+
+    SDL_SetRenderDrawBlendMode(r, prev);
+}
+
 static void draw_target_box(SDL_Renderer* r, int origin_x, int origin_y, int cell, Pos p)
 {
     int gx = (int)p.x, gy = (int)p.y;
@@ -882,6 +968,36 @@ static void draw_battle_grid(SDL_Renderer *r, int origin_x, int origin_y, int ce
         int mv = get_move_range_for_unit(u);
         draw_move_highlight(r, origin_x, origin_y, cell, from, mv);
     }
+
+    // --- 攻撃射程 / 範囲（半透明赤） ---
+    if (!g_exec_active && !g_p1_locked) {
+        int aidx = unit_index(TEAM_P1, g_act_slot);
+        const Unit *au = &b->units[aidx];
+        const SkillDef *sk = resolve_skill_def_for_unit(au, g_skill_index[g_act_slot]);
+
+        // このターンの攻撃起点は「移動カーソル確定位置」を優先
+        Pos from = g_move_to;
+        if ((int)from.x < 0 || (int)from.x >= GRID_W || (int)from.y < 0 || (int)from.y >= GRID_H) {
+            from = au->pos;
+        }
+
+        if (g_ui == UI_TARGET_SELECT) {
+            // 単体攻撃：射程表示
+            if (sk && sk->target == SKT_SINGLE && battle_skill_should_check_range(sk)) {
+                draw_range_highlight_red(r, origin_x, origin_y, cell, from, sk->range, 255, 40, 40, 70);
+            }
+        } else if (g_ui == UI_AOE_CENTER_SELECT) {
+            // 範囲攻撃：中心までの射程 + 攻撃範囲
+            if (sk && sk->target == SKT_AOE) {
+                if (battle_skill_should_check_range(sk)) {
+                    draw_range_highlight_red(r, origin_x, origin_y, cell, from, sk->range, 255, 40, 40, 55);
+                }
+                draw_aoe_area_red(r, origin_x, origin_y, cell, g_aoe_center_cursor, sk->aoe_radius, 255, 40, 40, 90);
+                draw_center_box(r, origin_x, origin_y, cell, g_aoe_center_cursor, 255, 255, 255, 220);
+            }
+        }
+    }
+
 
     set_color(r, 60, 60, 80, 255);
     for (int x = 0; x <= GRID_W; x++) {
@@ -957,16 +1073,16 @@ static void draw_battle_grid(SDL_Renderer *r, int origin_x, int origin_y, int ce
         SDL_RenderDrawRect(r, &cursor);
     }
 
-    // --- 追加：ターゲットをマップ上でハイライト ---
-if (!g_exec_active && !g_p1_locked && g_ui == UI_TARGET_SELECT) {
-    Team enemy = TEAM_P2;
-    Slot ts = (g_target == 1) ? SLOT_GIRL : SLOT_HERO;
-    int tidx = unit_index(enemy, ts);
-    const Unit* tgt = &b->units[tidx];
-    if (tgt->alive) {
-        draw_target_box(r, origin_x, origin_y, cell, tgt->pos);
+    // --- ターゲットをマップ上でハイライト ---
+    if (!g_exec_active && !g_p1_locked && g_ui == UI_TARGET_SELECT) {
+        Team enemy = TEAM_P2;
+        Slot ts = (g_target == 1) ? SLOT_GIRL : SLOT_HERO;
+        int tidx = unit_index(enemy, ts);
+        const Unit* tgt = &b->units[tidx];
+        if (tgt->alive) {
+            draw_target_box(r, origin_x, origin_y, cell, tgt->pos);
+        }
     }
-}
 
 }
 

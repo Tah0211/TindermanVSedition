@@ -8,10 +8,10 @@ static const SkillDef g_skills[] = {
     // hero
     // =========================
     // 技1：ST15 / 射程3 / ATK
-    { "hero_tech1", "技1", SKTYPE_ATTACK, 3, 15, SKT_SINGLE, 0, 0, 1, false },
+    { "hero_tech1", "アルティメットインパクト", SKTYPE_ATTACK, 3, 15, SKT_SINGLE, 0, 0, 1, false },
 
     // 技2：ST30 / 射程8 / ATK+10
-    { "hero_tech2", "技2", SKTYPE_ATTACK, 8, 30, SKT_SINGLE, 10, 0, 1, false },
+    { "hero_tech2", "魔閃光", SKTYPE_ATTACK, 8, 30, SKT_SINGLE, 10, 0, 1, false },
 
     // 技3：ST50 / 射程∞ / 味方全員HP+30
     // range=-1 を「射程∞」として扱う（射程判定/表示はスキップ）
@@ -21,14 +21,14 @@ static const SkillDef g_skills[] = {
     // himari
     // =========================
     // 技1：ST5 / 射程2 / ATK
-    { "himari_1", "ひまり1", SKTYPE_ATTACK, 2, 5, SKT_SINGLE, 0, 0, 1, false },
+    { "himari_1", "俊閃連撃", SKTYPE_ATTACK, 2, 5, SKT_SINGLE, 0, 0, 1, false },
 
     // 技2：カウンター ST30 / 自身から4マス以内の敵から攻撃を受けたとき / 敵ATK×2
     // 表現：COUNTER / range=4 / mult=2 / power=0
-    { "himari_2", "ひまりカウンター", SKTYPE_COUNTER, 4, 30, SKT_SINGLE, 0, 0, 2, false },
+    { "himari_2", "メトロアタック", SKTYPE_COUNTER, 4, 30, SKT_SINGLE, 0, 0, 2, false },
 
     // 技3：ST30 / 射程5 / ATK+10
-    { "himari_3", "ひまり3", SKTYPE_ATTACK, 5, 30, SKT_SINGLE, 10, 0, 1, false },
+    { "himari_3", "神速演舞", SKTYPE_ATTACK, 5, 30, SKT_SINGLE, 10, 0, 1, false },
 
     // タッグ：バトル中1回 / 射程5 / ATK×3
     { "himari_tag", "ひまりTAG", SKTYPE_ATTACK, 5, 30, SKT_SINGLE, 0, 0, 3, true },
@@ -37,16 +37,16 @@ static const SkillDef g_skills[] = {
     // kiritan
     // =========================
     // 技1：ST20 / 射程12 / ATK+10
-    { "kiritan_1", "きりたん1", SKTYPE_ATTACK, 12, 20, SKT_SINGLE, 10, 0, 1, false },
+    { "kiritan_1", "裁きの刃", SKTYPE_ATTACK, 12, 20, SKT_SINGLE, 10, 0, 1, false },
 
     // 技2：ST35 / 射程16 / ATK+10
-    { "kiritan_2", "きりたん2", SKTYPE_ATTACK, 16, 35, SKT_SINGLE, 10, 0, 1, false },
+    { "kiritan_2", "何とかビーム", SKTYPE_ATTACK, 16, 35, SKT_SINGLE, 10, 0, 1, false },
 
     // 技3：ST40 / 射程12（範囲攻撃）/ ATK+15 / 半径1
-    { "kiritan_3", "きりたん範囲", SKTYPE_ATTACK, 12, 40, SKT_AOE, 15, 1, 1, false },
+    { "kiritan_3", "スターダストフォール", SKTYPE_ATTACK, -1, 40, SKT_AOE, 15, 8, 1, false },
 
     // タッグ：バトル中1回 / 射程10 / ATK×6
-    { "kiritan_tag", "きりたんTAG", SKTYPE_ATTACK, 10, 40, SKT_SINGLE, 0, 0, 6, true },
+    { "kiritan_tag", "覚醒の一撃", SKTYPE_ATTACK, 10, 40, SKT_SINGLE, 0, 0, 6, true },
 
     // =========================
     // fallback（未知のgirl用）

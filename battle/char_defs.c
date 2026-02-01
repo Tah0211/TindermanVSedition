@@ -15,7 +15,7 @@ static const CharDef g_chars[] = {
     // ひまり
     {
         .char_id = "himari",
-        .st_regen_per_turn = 12,
+        .st_regen_per_turn = 5,
         .skill_ids = { "himari_1", "himari_2", "himari_3", NULL },
         .skill_count = 3,
         .tag_skill_id = "himari_tag"
@@ -24,7 +24,7 @@ static const CharDef g_chars[] = {
     // きりたん
     {
         .char_id = "kiritan",
-        .st_regen_per_turn = 8,
+        .st_regen_per_turn = 20,
         .skill_ids = { "kiritan_1", "kiritan_2", "kiritan_3", NULL },
         .skill_count = 3,
         .tag_skill_id = "kiritan_tag"

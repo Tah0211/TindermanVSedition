@@ -61,12 +61,26 @@ static void apply_damage(Unit *tgt, int dmg) {
     }
 }
 
-static void apply_heal(Unit *tgt, int amount) {
-    if (!tgt || !tgt->alive) return;
+static void apply_heal(BattleCore *b, int tidx, int amount) {
+    if (!b) return;
+    if (tidx < 0 || tidx >= 4) return;
+    Unit *tgt = &b->units[tidx];
+    if (!tgt->alive) return;
     if (amount < 1) amount = 1;
-    tgt->stats.hp += amount;
-    // max_hp がまだ無いので上限クランプはしない
+
+    int maxhp = b->hp_max[tidx];
+    if (maxhp < 1) {
+        // 念のため：未初期化なら現HPを最大として扱う
+        maxhp = tgt->stats.hp;
+        if (maxhp < 1) maxhp = 1;
+        b->hp_max[tidx] = maxhp;
+    }
+
+    int nhp = tgt->stats.hp + amount;
+    if (nhp > maxhp) nhp = maxhp;
+    tgt->stats.hp = nhp;
 }
+
 
 static void apply_aoe_mixed(BattleCore *b, Team actor_team, Pos center, int dmg, int radius) {
     if (!b) return;
@@ -157,26 +171,33 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
     // HEAL：味方を対象（targetは味方hero/girl）
     // -------------------------
     if (sk->type == SKTYPE_HEAL) {
-        int tidx = unit_index(actor_team, ts);
-        Unit *tgt = &b->units[tidx];
-        if (!tgt->alive) return;
-
-        // range check
-        // 範囲攻撃は「射程なし」なので判定しない
-        if (sk->target == SKT_SINGLE) {
-            if (!in_range_manhattan_units(att, tgt, sk->range)) return;
-        }
+        int heal = sk->power;
+        if (heal < 1) heal = 1;
 
         // ST不足なら不発（成立時のみ消費）
         if (!spend_st_if_possible(att, sk->st_cost)) return;
 
-        int heal = sk->power;
-        if (heal < 1) heal = 1;
-        apply_heal(tgt, heal);
+        if (sk->target == SKT_SINGLE) {
+            int tidx = unit_index(actor_team, ts);
+            Unit *tgt = &b->units[tidx];
+            if (!tgt->alive) return;
+
+            // range check（単体のみ）
+            if (!in_range_manhattan_units(att, tgt, sk->range)) return;
+
+            apply_heal(b, tidx, heal);
+        } else {
+            // 範囲回復：味方全体（hero + girl）
+            int iH = unit_index(actor_team, SLOT_HERO);
+            int iG = unit_index(actor_team, SLOT_GIRL);
+            apply_heal(b, iH, heal);
+            apply_heal(b, iG, heal);
+        }
 
         if (!b->last_executed_skill_id) b->last_executed_skill_id = skill_id;
         return;
     }
+
 
     // -------------------------
     // ATTACK：敵を対象（targetは敵hero/girl）
@@ -298,6 +319,13 @@ bool battle_core_init(
 
     b->_has_cmd[TEAM_P1] = false;
     b->_has_cmd[TEAM_P2] = false;
+
+    // 最大HPは「初期HP＝最大」として保存（ALLOCATE後の初期値が満タン前提）
+    for (int i = 0; i < 4; ++i) {
+        int hp = b->units[i].stats.hp;
+        if (hp < 1) hp = 1;
+        b->hp_max[i] = hp;
+    }
     return true;
 }
 
@@ -370,6 +398,13 @@ void battle_core_end_exec(BattleCore *b) {
     b->_has_cmd[TEAM_P1] = false;
     b->_has_cmd[TEAM_P2] = false;
 
+    // 最大HPは「初期HP＝最大」として保存（ALLOCATE後の初期値が満タン前提）
+    for (int i = 0; i < 4; ++i) {
+        int hp = b->units[i].stats.hp;
+        if (hp < 1) hp = 1;
+        b->hp_max[i] = hp;
+    }
+
     if (team_all_dead(b, TEAM_P1) || team_all_dead(b, TEAM_P2)) {
         b->phase = BPHASE_END;
         return;
@@ -415,6 +450,13 @@ bool battle_core_step(BattleCore *b) {
     // 3) end turn
     b->_has_cmd[TEAM_P1] = false;
     b->_has_cmd[TEAM_P2] = false;
+
+    // 最大HPは「初期HP＝最大」として保存（ALLOCATE後の初期値が満タン前提）
+    for (int i = 0; i < 4; ++i) {
+        int hp = b->units[i].stats.hp;
+        if (hp < 1) hp = 1;
+        b->hp_max[i] = hp;
+    }
 
     if (team_all_dead(b, TEAM_P1) || team_all_dead(b, TEAM_P2)) {
         b->phase = BPHASE_END;
