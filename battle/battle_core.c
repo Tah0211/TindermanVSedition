@@ -43,7 +43,7 @@ static int calc_atk_plus_power(const Unit *att, int power) {
 }
 
 static bool in_range_manhattan_pos(Pos a, Pos b, int range) {
-    if (range < 0) return false;
+    if (range < 0) return true; // range=-1 は射程∞
     return manhattan(a, b) <= range;
 }
 
@@ -80,7 +80,6 @@ static void apply_heal(BattleCore *b, int tidx, int amount) {
     if (nhp > maxhp) nhp = maxhp;
     tgt->stats.hp = nhp;
 }
-
 
 static void apply_aoe_mixed(BattleCore *b, Team actor_team, Pos center, int dmg, int radius) {
     if (!b) return;
@@ -146,9 +145,6 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
     const SkillDef *sk = battle_skill_get(skill_id);
     if (!sk) return;
 
-    // 以後「成立条件」を満たしたときだけ ST 消費する方針
-    // COUNTERは「構え時に消費」なので、成立条件＝構え成立
-
     // -------------------------
     // COUNTER：対象不要（自分に状態付与）
     // -------------------------
@@ -198,7 +194,6 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
         return;
     }
 
-
     // -------------------------
     // ATTACK：敵を対象（targetは敵hero/girl）
     // -------------------------
@@ -211,27 +206,32 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
             tidx = unit_index(enemy, ts);
             tgt = &b->units[tidx];
             if (!tgt->alive) return;
-        }
-// range check（成立条件）
-        // 範囲攻撃は「射程なし」なので判定しない
-        if (sk->target == SKT_SINGLE) {
-            if (!in_range_manhattan_units(att, tgt, sk->range)) return;
-        }
 
-        // ST不足なら不発（成立時のみ消費）
-        if (!spend_st_if_possible(att, sk->st_cost)) return;
+            // ★変更：使った時点でST消費（射程外でも消費する）
+            if (!spend_st_if_possible(att, sk->st_cost)) return;
+
+            // 使った扱い（外してもログ/演出を出せる）
+            if (!b->last_executed_skill_id) b->last_executed_skill_id = skill_id;
+
+            // 射程外なら不発（STは消費済み）
+            if (!in_range_manhattan_units(att, tgt, sk->range)) return;
+
+        } else {
+            // 範囲攻撃は「射程なし」なので判定しない（現行仕様）
+            // ★変更：使った時点でST消費
+            if (!spend_st_if_possible(att, sk->st_cost)) return;
+
+            if (!b->last_executed_skill_id) b->last_executed_skill_id = skill_id;
+        }
 
         int dmg = calc_atk_plus_power(att, sk->power);
 
-        // 反撃フラグを先に見ておく（攻撃を受けた瞬間に発動判定したい）
-        // 反撃フラグ（単体攻撃のときだけ参照）
+        // 反撃フラグを先に見ておく（単体攻撃のときだけ参照）
         bool had_counter = false;
         int  crange = 0;
-        int  cpower = 0;
         if (sk->target == SKT_SINGLE && tidx >= 0) {
             had_counter = b->counter_ready[tidx];
             crange = b->counter_range[tidx];
-            cpower = b->counter_power[tidx];
         }
 
         if (sk->target == SKT_SINGLE) {
@@ -246,20 +246,20 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
             apply_aoe_mixed(b, actor_team, c, dmg, r);
         }
 
-        // カウンター：単体攻撃に対してのみ発動（AOEは一旦不発にして読み合いを単純化）
-        // ※必要なら「AOEでも中心対象が被弾したら発動」等に後で拡張
+        // カウンター：単体攻撃に対してのみ発動（AOEは不発）
         if (had_counter && sk->target == SKT_SINGLE && tgt) {
             // 構えは消費（発動してもしなくても解除する設計）
             b->counter_ready[tidx] = false;
 
             // 反撃側（tgt）が生きていて、射程内なら反撃
             if (tgt->alive && att->alive && in_range_manhattan_pos(tgt->pos, att->pos, crange)) {
-                int cdmg = calc_atk_plus_power(tgt, cpower);
+                // ★変更：反撃ダメージ＝「相手が与えるはずだったダメージ」の2倍
+                int cdmg = dmg * 2;
+                if (cdmg < 1) cdmg = 1;
                 apply_damage(att, cdmg);
             }
         }
 
-        if (!b->last_executed_skill_id) b->last_executed_skill_id = skill_id;
         return;
     }
 
@@ -326,6 +326,7 @@ bool battle_core_init(
         if (hp < 1) hp = 1;
         b->hp_max[i] = hp;
     }
+
     return true;
 }
 
@@ -398,13 +399,6 @@ void battle_core_end_exec(BattleCore *b) {
     b->_has_cmd[TEAM_P1] = false;
     b->_has_cmd[TEAM_P2] = false;
 
-    // 最大HPは「初期HP＝最大」として保存（ALLOCATE後の初期値が満タン前提）
-    for (int i = 0; i < 4; ++i) {
-        int hp = b->units[i].stats.hp;
-        if (hp < 1) hp = 1;
-        b->hp_max[i] = hp;
-    }
-
     if (team_all_dead(b, TEAM_P1) || team_all_dead(b, TEAM_P2)) {
         b->phase = BPHASE_END;
         return;
@@ -450,13 +444,6 @@ bool battle_core_step(BattleCore *b) {
     // 3) end turn
     b->_has_cmd[TEAM_P1] = false;
     b->_has_cmd[TEAM_P2] = false;
-
-    // 最大HPは「初期HP＝最大」として保存（ALLOCATE後の初期値が満タン前提）
-    for (int i = 0; i < 4; ++i) {
-        int hp = b->units[i].stats.hp;
-        if (hp < 1) hp = 1;
-        b->hp_max[i] = hp;
-    }
 
     if (team_all_dead(b, TEAM_P1) || team_all_dead(b, TEAM_P2)) {
         b->phase = BPHASE_END;

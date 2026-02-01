@@ -21,14 +21,14 @@ static const SkillDef g_skills[] = {
     // himari
     // =========================
     // 技1：ST5 / 射程2 / ATK
-    { "himari_1", "俊閃連撃", SKTYPE_ATTACK, 2, 5, SKT_SINGLE, 0, 0, 1, false },
+    { "himari_1", "神越演舞", SKTYPE_ATTACK, 2, 5, SKT_SINGLE, 0, 0, 1, false },
 
     // 技2：カウンター ST30 / 自身から4マス以内の敵から攻撃を受けたとき / 敵ATK×2
     // 表現：COUNTER / range=4 / mult=2 / power=0
-    { "himari_2", "メトロアタック", SKTYPE_COUNTER, 4, 30, SKT_SINGLE, 0, 0, 2, false },
+    { "himari_2", "メトロアタック", SKTYPE_COUNTER, 4, 30, SKT_SINGLE, 0, 0, 3, false },
 
     // 技3：ST30 / 射程5 / ATK+10
-    { "himari_3", "神速演舞", SKTYPE_ATTACK, 5, 30, SKT_SINGLE, 10, 0, 1, false },
+    { "himari_3", "超神撃拳", SKTYPE_ATTACK, 5, 30, SKT_SINGLE, 10, 0, 1, false },
 
     // タッグ：バトル中1回 / 射程5 / ATK×3
     { "himari_tag", "ひまりTAG", SKTYPE_ATTACK, 5, 30, SKT_SINGLE, 0, 0, 3, true },

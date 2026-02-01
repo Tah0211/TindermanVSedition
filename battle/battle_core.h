@@ -20,8 +20,7 @@ typedef struct {
     BattlePhase phase;
     int turn;
     Unit units[4];
-
-    int hp_max[4];      // 各ユニットの最大HP（初期値を最大として保存）
+    int  hp_max[4];      // 最大HP（初期値を最大として保持）
 
     // 「成立した最初の技だけ」演出に使う（実skill_id）
     const char *last_executed_skill_id;
@@ -39,7 +38,7 @@ typedef struct {
 
     // --- 追加：カウンター状態（Unitを汚さない） ---
     bool counter_ready[4];   // 構え中か
-    int  counter_power[4];   // 反撃の power（atk+power）
+    int  counter_power[4];   // 反撃の power（今は保持のみ）
     int  counter_range[4];   // 反撃射程（マンハッタン）
 } BattleCore;
 

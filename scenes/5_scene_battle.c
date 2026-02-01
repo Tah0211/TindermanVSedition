@@ -17,6 +17,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h> // abs
+#include <stdarg.h>
 #include <math.h>   // fabsf, roundf, expf, lroundf
 
 
@@ -24,6 +25,7 @@
 //  表示/フォント
 // ===============================
 static TTF_Font *g_font = NULL;
+static TTF_Font *g_font_log = NULL; // ログ用（小さめ）
 
 // ===============================
 //  Battle Core（純ロジック）
@@ -75,6 +77,264 @@ static bool g_p2_locked = false;
 #define PANEL_Y 300
 #define PANEL_W 620
 #define PANEL_H 320
+
+
+
+// 先行宣言（バトルログ用：後方定義の関数を参照する）
+static void set_color(SDL_Renderer *r, Uint8 R, Uint8 G, Uint8 B, Uint8 A);
+static const char* slot_label(Slot s);
+static const char* resolve_skill_id_for_unit(const Unit *u, int skill_index);
+
+// ===============================
+//  バトルログ（右側パネル下）
+//  - 固定行数リングバッファ
+//  - 新規行だけテクスチャ生成（毎フレームTTFしない）
+// ===============================
+#define BLOG_MAX_LINES 12
+#define BLOG_TEXT_MAX  128
+
+typedef struct {
+    char text[BLOG_TEXT_MAX];
+    bool dirty;
+    SDL_Texture *tex;
+    int w, h;
+} BattleLogLine;
+
+static BattleLogLine g_blog[BLOG_MAX_LINES];
+static int g_blog_head = 0;   // 次に書く場所
+static int g_blog_count = 0;  // 現在行数（最大BLOG_MAX_LINES）
+
+static void blog_clear(void)
+{
+    for (int i = 0; i < BLOG_MAX_LINES; i++) {
+        if (g_blog[i].tex) {
+            SDL_DestroyTexture(g_blog[i].tex);
+            g_blog[i].tex = NULL;
+        }
+        g_blog[i].dirty = false;
+        g_blog[i].w = g_blog[i].h = 0;
+        g_blog[i].text[0] = '\0';
+    }
+    g_blog_head = 0;
+    g_blog_count = 0;
+}
+
+static void blog_pushf(const char *fmt, ...)
+{
+    if (!fmt) return;
+
+    int idx = g_blog_head;
+
+    // 既存テクスチャ破棄
+    if (g_blog[idx].tex) {
+        SDL_DestroyTexture(g_blog[idx].tex);
+        g_blog[idx].tex = NULL;
+    }
+
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_blog[idx].text, sizeof(g_blog[idx].text), fmt, ap);
+    va_end(ap);
+
+    g_blog[idx].dirty = true;
+    g_blog[idx].w = g_blog[idx].h = 0;
+
+    g_blog_head = (g_blog_head + 1) % BLOG_MAX_LINES;
+    if (g_blog_count < BLOG_MAX_LINES) g_blog_count++;
+}
+
+static void blog_ensure_texture(SDL_Renderer *r, BattleLogLine *ln, int max_w)
+{
+    if (!ln || !ln->dirty) return;
+    ln->dirty = false;
+
+    if (!ln->text[0] || !r) return;
+
+    // ログは小さめフォント（無ければメイン）
+    TTF_Font *font = (g_font_log ? g_font_log : g_font);
+    if (!font) return;
+
+    if (max_w < 32) max_w = 32;
+
+    SDL_Color col = { 240, 240, 240, 255 };
+
+    // 幅に収まるように折り返し（読みやすさ優先）
+    SDL_Surface *surf = TTF_RenderUTF8_Blended_Wrapped(font, ln->text, col, (Uint32)max_w);
+    if (!surf) return;
+
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(r, surf);
+    ln->w = surf->w;
+    ln->h = surf->h;
+
+    SDL_FreeSurface(surf);
+    ln->tex = tex;
+}
+
+static void blog_render(SDL_Renderer *r, int x, int y, int w, int h, int max_lines)
+{
+    if (!r) return;
+
+    TTF_Font *font = (g_font_log ? g_font_log : g_font);
+    if (!font) return;
+
+    if (max_lines < 1) max_lines = 1;
+    if (max_lines > BLOG_MAX_LINES) max_lines = BLOG_MAX_LINES;
+
+    // 背景
+    set_color(r, 14, 14, 20, 230);
+    SDL_Rect box = { x, y, w, h };
+    SDL_RenderFillRect(r, &box);
+    set_color(r, 80, 80, 110, 255);
+    SDL_RenderDrawRect(r, &box);
+
+    // 見出し（小さめ）
+    ui_text_draw(r, font, "LOG", x + 8, y + 6);
+
+    int header_h = TTF_FontHeight(font);
+    if (header_h < 12) header_h = 12;
+
+    int line_y = y + 6 + header_h + 6;
+
+    // 表示する開始行（古い→新しい）
+    int shown = (g_blog_count < max_lines) ? g_blog_count : max_lines;
+    int start = (g_blog_head - g_blog_count + BLOG_MAX_LINES) % BLOG_MAX_LINES;
+    if (g_blog_count > shown) {
+        start = (g_blog_head - shown + BLOG_MAX_LINES) % BLOG_MAX_LINES;
+    }
+
+    // クリップ（枠からはみ出さないように）
+    SDL_Rect clip = { x + 8, line_y, w - 16, h - (line_y - y) - 8 };
+    if (clip.w < 1) clip.w = 1;
+    if (clip.h < 1) clip.h = 1;
+    SDL_RenderSetClipRect(r, &clip);
+
+    for (int i = 0; i < shown; i++) {
+        int idx = (start + i) % BLOG_MAX_LINES;
+        BattleLogLine *ln = &g_blog[idx];
+        if (!ln->text[0]) continue;
+
+        blog_ensure_texture(r, ln, clip.w);
+
+        int lh = 0;
+        if (ln->tex) {
+            lh = ln->h;
+            SDL_Rect dst = { x + 8, line_y, ln->w, ln->h };
+            SDL_RenderCopy(r, ln->tex, NULL, &dst);
+        } else {
+            // 万一テクスチャ化できない場合はフォールバック
+            ui_text_draw(r, font, ln->text, x + 8, line_y);
+            lh = header_h;
+        }
+
+        line_y += lh + 2;
+        if (line_y > y + h - 8) break;
+    }
+
+    SDL_RenderSetClipRect(r, NULL);
+}
+
+
+// ===============================
+//  実行フェーズ：HP差分ログ用
+// ===============================
+typedef struct {
+    int hp[4];
+    bool alive[4];
+} UnitSnapshot;
+
+static void snap_units(const BattleCore *b, UnitSnapshot *s)
+{
+    if (!b || !s) return;
+    for (int i = 0; i < 4; i++) {
+        s->hp[i] = b->units[i].stats.hp;
+        s->alive[i] = b->units[i].alive;
+    }
+}
+
+static const char* unit_short_label(int ui)
+{
+    static const char *names[4] = { "1P主", "1P相", "2P主", "2P相" };
+    if (ui < 0 || ui >= 4) return "?";
+    return names[ui];
+}
+
+
+static const UnitCmd* get_unitcmd_for_ui(int ui)
+{
+    if (ui < 0 || ui >= 4) return NULL;
+    if (ui < 2) {
+        return &g_p1_cmd.cmd[(ui == 0) ? SLOT_HERO : SLOT_GIRL];
+    } else {
+        return &g_p2_cmd.cmd[(ui == 2) ? SLOT_HERO : SLOT_GIRL];
+    }
+}
+
+static void log_action_intent(int ui, const UnitCmd *uc)
+{
+    if (!uc) return;
+
+    const Unit *actor = &g_core.units[ui];
+    const char *who = unit_short_label(ui);
+
+    // 移動は別でログを出す（MOVE完了時）
+    if (uc->skill_index < 0) {
+        blog_pushf("%s %s: WAIT", who, slot_label(actor->slot));
+        return;
+    }
+
+    const char *sid = resolve_skill_id_for_unit(actor, uc->skill_index);
+    const SkillDef *sk = battle_skill_get(sid);
+
+    if (!sk) {
+        blog_pushf("%s %s: SKILL#%d", who, slot_label(actor->slot), (int)uc->skill_index + 1);
+        return;
+    }
+
+    if (sk->type == SKTYPE_ATTACK) {
+        if (sk->target == SKT_SINGLE) {
+            const char *tname = (uc->target == 1) ? "敵相棒" : "敵主人公";
+            blog_pushf("%s %s: %s -> %s", who, slot_label(actor->slot), sk->name, tname);
+        } else {
+            blog_pushf("%s %s: %s (AOE) c=(%d,%d) r=%d",
+                       who, slot_label(actor->slot), sk->name,
+                       (int)uc->center.x, (int)uc->center.y, sk->aoe_radius);
+        }
+    } else if (sk->type == SKTYPE_HEAL) {
+        if (sk->target == SKT_AOE) {
+            blog_pushf("%s %s: %s (TEAM HEAL)", who, slot_label(actor->slot), sk->name);
+        } else {
+            const char *tname = (uc->target == 1) ? "味方相棒" : "味方主人公";
+            blog_pushf("%s %s: %s -> %s", who, slot_label(actor->slot), sk->name, tname);
+        }
+    } else if (sk->type == SKTYPE_COUNTER) {
+        blog_pushf("%s %s: %s (COUNTER)", who, slot_label(actor->slot), sk->name);
+    } else {
+        blog_pushf("%s %s: %s", who, slot_label(actor->slot), sk->name);
+    }
+}
+
+static void log_action_results(const UnitSnapshot *before, const BattleCore *after)
+{
+    if (!before || !after) return;
+
+    for (int i = 0; i < 4; i++) {
+        int hp0 = before->hp[i];
+        int hp1 = after->units[i].stats.hp;
+        bool a0 = before->alive[i];
+        bool a1 = after->units[i].alive;
+
+        if (hp1 != hp0 || a1 != a0) {
+            if (a0 && !a1) {
+                blog_pushf("  -> %s KO!", unit_short_label(i));
+            }
+            if (hp1 > hp0) {
+                blog_pushf("  -> %s +%d (%d->%d)", unit_short_label(i), hp1 - hp0, hp0, hp1);
+            } else if (hp1 < hp0) {
+                blog_pushf("  -> %s -%d (%d->%d)", unit_short_label(i), hp0 - hp1, hp0, hp1);
+            }
+        }
+    }
+}
 
 // ===============================
 //  UI状態
@@ -449,6 +709,7 @@ static Pos get_p1_unit_draw_pos(const Unit *u)
 static void init_battle_core(void)
 {
     if (!g_font) g_font = ui_load_font("assets/font/main.otf", 28);
+    if (!g_font_log) g_font_log = ui_load_font("assets/font/main.otf", 16);
 
     Stats p1h, p1g, p2h, p2g;
 
@@ -630,6 +891,7 @@ static void try_advance_turn_local(void)
 
     if (!battle_core_begin_exec(&g_core)) return;
 
+    blog_pushf("=== Turn %d ===", g_core.turn);
     start_exec_phase_from_cmds();
 }
 
@@ -645,6 +907,17 @@ static void exec_update(float dt)
 
         // ★regenを char_defs に統一
         apply_st_regen_after_step();
+
+        // ログ：勝敗/継続
+        if (g_core.phase == BPHASE_END) {
+            bool p1_dead = (!g_core.units[0].alive) && (!g_core.units[1].alive);
+            bool p2_dead = (!g_core.units[2].alive) && (!g_core.units[3].alive);
+            if (p1_dead && p2_dead) blog_pushf("=== DRAW ===");
+            else if (p2_dead)       blog_pushf("=== P1 WIN ===");
+            else if (p1_dead)       blog_pushf("=== P2 WIN ===");
+            else                    blog_pushf("=== END ===");
+        }
+
 
         if (g_core.last_executed_skill_id && g_cutin.renderer) {
             const char *mp4 = battle_skill_movie_path(g_core.last_executed_skill_id);
@@ -708,6 +981,17 @@ static void exec_update(float dt)
             g_anim_pos_f[ui] = dst;
             u->pos = g_cmd_move_to[ui];
 
+            // ログ：移動
+            if (g_cmd_has_move[ui]) {
+                Pos from = g_pre_step_pos[ui];
+                Pos to   = g_cmd_move_to[ui];
+                if (from.x != to.x || from.y != to.y) {
+                    blog_pushf("%s %s: MOVE (%d,%d)->(%d,%d)",
+                               unit_short_label(ui), slot_label(u->slot),
+                               (int)from.x, (int)from.y, (int)to.x, (int)to.y);
+                }
+            }
+
             g_exec_stage = EXE_ACT;
             g_act_pause_left = 0.0f;
         }
@@ -716,7 +1000,17 @@ static void exec_update(float dt)
 
     if (g_exec_stage == EXE_ACT) {
         if (g_act_pause_left <= 0.0f) {
+                        // ログ：行動意図 + 結果（HP差分）
+            UnitSnapshot snap;
+            snap_units(&g_core, &snap);
+
+            const UnitCmd *uc = get_unitcmd_for_ui(ui);
+            log_action_intent(ui, uc);
+
             battle_core_exec_act_for_unit(&g_core, ui);
+
+            log_action_results(&snap, &g_core);
+
             g_act_pause_left = g_act_pause_sec;
             return;
         }
@@ -1142,10 +1436,14 @@ static void draw_stat_panel(SDL_Renderer *r, int x, int y, int w, int h,
 void scene_battle_enter(void)
 {
     init_battle_core();
+    blog_clear();
+    blog_pushf("=== BATTLE START ===");
+    blog_pushf("Turn %d", g_core.turn);
 }
 
 void scene_battle_leave(void)
 {
+    blog_clear();
 }
 
 // 決定処理（待機）
@@ -1432,6 +1730,7 @@ void scene_battle_render(SDL_Renderer *r)
     SDL_RenderClear(r);
 
     if (!g_font) g_font = ui_load_font("assets/font/main.otf", 28);
+    if (!g_font_log) g_font_log = ui_load_font("assets/font/main.otf", 16);
 
     // ===============================
     // TopBar
@@ -1497,7 +1796,35 @@ void scene_battle_render(SDL_Renderer *r)
     const int cell = 24;
     draw_battle_grid(r, map_origin_x, map_origin_y, cell, &g_core);
 
+    
     // ===============================
+    // バトルログ（右側：ステータスの下）
+    // 表示タイミング：
+    //   - コマンド選択中（UI_CMD_SELECT）
+    //   - 実行中（g_exec_active）
+    // ===============================
+    {
+        bool show_log = (g_exec_active || (!g_p1_locked && g_ui == UI_CMD_SELECT));
+        if (show_log) {
+            TTF_Font *font = (g_font_log ? g_font_log : g_font);
+            int fh = (font ? TTF_FontHeight(font) : 16);
+            if (fh < 12) fh = 12;
+
+            // コマンド選択中は控えめ、実行中は多めに表示
+            int blog_lines = g_exec_active ? 10 : 6;
+
+            // 見出し＋行数分＋パディング
+            int blog_h = 6 + fh + 6 + blog_lines * (fh + 2) + 10;
+
+            int bx = PANEL_X + 10;
+            int bw = PANEL_W - 20;
+            int by = PANEL_Y + PANEL_H - blog_h - 8;
+
+            blog_render(r, bx, by, bw, blog_h, blog_lines);
+        }
+    }
+
+// ===============================
     // CommandBar / SkillBar / Confirm
     // ===============================
     {
@@ -1589,7 +1916,12 @@ void scene_battle_render(SDL_Renderer *r)
                 ui_text_draw(r, g_font, line, box.x + 10, box.y + 18);
             }
 
-            ui_text_draw(r, g_font, "←→ 技選択  Enter 決定", PANEL_X + 10, PANEL_Y + PANEL_H - 28);
+                        {
+                int blog_lines = 2;
+                int blog_h = 26 + blog_lines * 16 + 10;
+                int hint_y = PANEL_Y + PANEL_H - blog_h - 14;
+                ui_text_draw(r, g_font, "←→ 技選択  Enter 決定", PANEL_X + 10, hint_y);
+            }
         }
         else if (!g_p1_locked && g_ui == UI_TARGET_SELECT) {
             // 対象選択（単体攻撃のみ）
@@ -1597,14 +1929,24 @@ void scene_battle_render(SDL_Renderer *r)
             char line[128];
             snprintf(line, sizeof(line), "対象: %s", tname);
             ui_text_draw(r, g_font, line, PANEL_X + 10, PANEL_Y + 18);
-            ui_text_draw(r, g_font, "矢印/T 切替  Enter 確定", PANEL_X + 10, PANEL_Y + PANEL_H - 28);
+                        {
+                int blog_lines = 7;
+                int blog_h = 26 + blog_lines * 16 + 10;
+                int hint_y = PANEL_Y + PANEL_H - blog_h - 14;
+                ui_text_draw(r, g_font, "矢印/T 切替  Enter 確定", PANEL_X + 10, hint_y);
+            }
         }
         else if (!g_p1_locked && g_ui == UI_AOE_CENTER_SELECT) {
             // 範囲攻撃：中心指定
             char line[128];
             snprintf(line, sizeof(line), "中心: (%d,%d)", (int)g_aoe_center_cursor.x, (int)g_aoe_center_cursor.y);
             ui_text_draw(r, g_font, line, PANEL_X + 10, PANEL_Y + 18);
-            ui_text_draw(r, g_font, "矢印 移動  Enter 確定", PANEL_X + 10, PANEL_Y + PANEL_H - 28);
+                        {
+                int blog_lines = 7;
+                int blog_h = 26 + blog_lines * 16 + 10;
+                int hint_y = PANEL_Y + PANEL_H - blog_h - 14;
+                ui_text_draw(r, g_font, "矢印 移動  Enter 確定", PANEL_X + 10, hint_y);
+            }
         }
         else {
             int attack_x = 140;
