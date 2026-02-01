@@ -2,18 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-python/grok_bridge.py（完全修正版）
-- emotion を 8大感情キー（英語）に強制正規化して返す
-- LLM には「emotion は英語キーのみ」を明示（ブレ低減）
-- それでも日本語 emotion が来た場合はマップして正規化（保険）
-- neutral は使わない（欠損/不正は直前維持、なければ trust）
-- APIキーは環境変数から読む（ソースに直書きしない）
+python/grok_bridge.py（emotionをbuild.jsonに保存しない版）
+- LLM 返答の emotion は 8大感情キー（英語）に強制正規化して C 側に返す
+- build.json には affection 等は保存するが、emotion は保存しない
+- emotion のフォールバック（直前維持）は logs/chat.json の直近 assistant emotion を参照
+- build.json が壊れていても、最低限のキーをサルベージして “正しいJSON” に書き直せる
+- APIキーは環境変数のみ（直書きデフォルトなし）
 """
 
 import json
 import os
 import sys
-from typing import Dict, Any, List, Optional
+import re
+from typing import Dict, Any, List, Optional, Tuple
 
 import requests
 
@@ -55,59 +56,23 @@ EMOTION_KEYS = [
 ]
 
 # 日本語や揺れを 8キーに寄せる（保険）
-# ※ここは運用しながら増やしてOK
 EMOTION_MAP = {
     # trust
-    "穏やか": "trust",
-    "安心": "trust",
-    "落ち着き": "trust",
-    "信頼": "trust",
-    "やさしい": "trust",
-    "優しい": "trust",
-
+    "穏やか": "trust", "安心": "trust", "落ち着き": "trust", "信頼": "trust", "やさしい": "trust", "優しい": "trust",
     # joy
-    "嬉しい": "joy",
-    "うれしい": "joy",
-    "喜び": "joy",
-    "楽しい": "joy",
-    "にこにこ": "joy",
-
+    "嬉しい": "joy", "うれしい": "joy", "喜び": "joy", "楽しい": "joy", "にこにこ": "joy",
     # anticipation
-    "興味津々": "anticipation",
-    "興味": "anticipation",
-    "期待": "anticipation",
-    "わくわく": "anticipation",
-    "ドキドキ": "anticipation",
-
+    "興味津々": "anticipation", "興味": "anticipation", "期待": "anticipation", "わくわく": "anticipation", "ドキドキ": "anticipation",
     # surprise
-    "驚き": "surprise",
-    "びっくり": "surprise",
-    "吃驚": "surprise",
-
+    "驚き": "surprise", "びっくり": "surprise", "吃驚": "surprise",
     # fear
-    "不安": "fear",
-    "少し不安": "fear",
-    "こわい": "fear",
-    "怖い": "fear",
-    "緊張": "fear",
-
+    "不安": "fear", "少し不安": "fear", "こわい": "fear", "怖い": "fear", "緊張": "fear",
     # sadness
-    "悲しい": "sadness",
-    "かなしい": "sadness",
-    "寂しい": "sadness",
-    "さみしい": "sadness",
-    "落ち込む": "sadness",
-
+    "悲しい": "sadness", "かなしい": "sadness", "寂しい": "sadness", "さみしい": "sadness", "落ち込む": "sadness",
     # anger
-    "怒り": "anger",
-    "いらだち": "anger",
-    "ムカつく": "anger",
-
+    "怒り": "anger", "いらだち": "anger", "ムカつく": "anger",
     # disgust
-    "嫌悪": "disgust",
-    "嫌": "disgust",
-    "拒否": "disgust",
-    "うんざり": "disgust",
+    "嫌悪": "disgust", "嫌": "disgust", "拒否": "disgust", "うんざり": "disgust",
 }
 
 def normalize_emotion(raw: Any, fallback: str) -> str:
@@ -125,16 +90,15 @@ def normalize_emotion(raw: Any, fallback: str) -> str:
     if e in EMOTION_KEYS:
         return e
 
-    # rawが日本語の場合はそのまま引く（lower()で壊れても raw を再利用）
     if isinstance(raw, str):
         mapped = EMOTION_MAP.get(raw.strip())
         if mapped in EMOTION_KEYS:
             return mapped
 
-    # "joy/trust" など混ざりも最低限救う
     if isinstance(raw, str):
+        low = raw.lower()
         for k in EMOTION_KEYS:
-            if k in raw.lower():
+            if k in low:
                 return k
 
     return fallback if fallback in EMOTION_KEYS else "trust"
@@ -143,7 +107,14 @@ def normalize_emotion(raw: Any, fallback: str) -> str:
 # util
 # ============================================================
 
-def read_json_safe(path: str, default: Any):
+def read_text_safe(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+def read_json_safe(path: str, default: Any) -> Any:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -151,7 +122,9 @@ def read_json_safe(path: str, default: Any):
         return default
 
 def write_json_safe(path: str, obj: Any):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, ensure_ascii=False)
 
@@ -163,7 +136,9 @@ def clamp(v: int, lo: int, hi: int) -> int:
 # ============================================================
 
 def debug_log(title: str, content: str):
-    os.makedirs(os.path.dirname(DEBUG_LOG_PATH), exist_ok=True)
+    d = os.path.dirname(DEBUG_LOG_PATH)
+    if d:
+        os.makedirs(d, exist_ok=True)
     with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
         f.write("\n" + "=" * 60 + "\n")
         f.write(f"[{title}]\n")
@@ -171,33 +146,115 @@ def debug_log(title: str, content: str):
         f.write("\n")
 
 # ============================================================
-# build.json
+# build.json (emotion は保持しない)
 # ============================================================
 
+def _salvage_build_from_broken_json(text: str, default: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    build.json が壊れて json.load できない場合でも、
+    よく使うキーだけは雑に拾って “できるだけ元を保ったまま” 復旧する。
+    """
+    obj = dict(default)
+
+    # string: "key": "value"
+    def pick_str(key: str):
+        m = re.search(rf'"{re.escape(key)}"\s*:\s*"([^"]*)"', text)
+        if m:
+            obj[key] = m.group(1)
+
+    # int: "key": 123
+    def pick_int(key: str):
+        m = re.search(rf'"{re.escape(key)}"\s*:\s*(-?\d+)', text)
+        if m:
+            try:
+                obj[key] = int(m.group(1))
+            except Exception:
+                pass
+
+    # bool: "key": true/false
+    def pick_bool(key: str):
+        m = re.search(rf'"{re.escape(key)}"\s*:\s*(true|false)', text, flags=re.IGNORECASE)
+        if m:
+            obj[key] = (m.group(1).lower() == "true")
+
+    pick_str("girl_id")
+    pick_int("affection")
+    pick_int("phase")
+    pick_int("turn_in_phase")
+    pick_bool("core_used")
+
+    # 他に必要ならここに追加
+    return obj
+
 def load_build() -> Dict[str, Any]:
-    default = {
+    default: Dict[str, Any] = {
         "girl_id": "himari",
         "affection": 30,
-        "morale": 0,
         "phase": 0,
         "turn_in_phase": 0,
         "core_used": False,
-
-        # ★追加：直前の感情（neutralは使わない）
-        "emotion": "trust"
     }
-    obj = read_json_safe(BUILD_PATH, default)
-    for k, v in default.items():
-        obj.setdefault(k, v)
 
-    # 万一 neutral が入っていたら trust に矯正
-    if obj.get("emotion") not in EMOTION_KEYS:
-        obj["emotion"] = "trust"
+    # まず正規JSONとして読む
+    obj = read_json_safe(BUILD_PATH, None)
+    if isinstance(obj, dict):
+        for k, v in default.items():
+            obj.setdefault(k, v)
+        # emotion はこのスクリプトでは扱わない（残ってても放置）
+        return obj
+
+    # 壊れている場合はサルベージして復旧
+    raw = read_text_safe(BUILD_PATH)
+    if raw:
+        obj = _salvage_build_from_broken_json(raw, default)
+    else:
+        obj = dict(default)
+
+    # ここで “正しいJSON” に書き直しておく（以後の事故防止）
+    try:
+        write_json_safe(BUILD_PATH, obj)
+    except Exception:
+        pass
 
     return obj
 
 def save_build(obj: Dict[str, Any]):
+    # emotion は保存しない（キーがあってもそのまま書くかどうかは好みだが、
+    # ここでは「buildを丸ごと保存」するので、他が使ってるキーは保持される）
     write_json_safe(BUILD_PATH, obj)
+
+# ============================================================
+# chat log -> last emotion fallback
+# ============================================================
+
+def load_last_emotion_from_chat_log() -> str:
+    """
+    logs/chat.json の末尾から、assistant の emotion を探して返す。
+    無ければ trust。
+    """
+    obj = read_json_safe(CHAT_LOG_PATH, {"messages": []})
+    msgs = obj.get("messages", [])
+    if not isinstance(msgs, list):
+        return "trust"
+
+    # 末尾から探す
+    for m in reversed(msgs):
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "assistant":
+            e = m.get("emotion")
+            if isinstance(e, str):
+                e2 = e.strip().lower()
+                if e2 in EMOTION_KEYS:
+                    return e2
+            # 旧形式などで assistant 内に埋め込まれてた場合も救う
+            if "content" in m and isinstance(m["content"], str):
+                low = m["content"].lower()
+                for k in EMOTION_KEYS:
+                    if k in low:
+                        return k
+
+    return "trust"
 
 # ============================================================
 # character / system prompt builder
@@ -231,7 +288,6 @@ def build_system_prompt(char: Dict[str, Any], build: Dict[str, Any]) -> str:
     succ = core_event.get("success_condition", [])
     fail = core_event.get("failure_condition", [])
 
-    # ★最重要：emotion の出力を 8キー（英語）に強制
     emotion_rule = (
         "emotion は必ず次の英語キーのいずれか1つのみを返してください（日本語は禁止）：\n"
         "- trust\n- joy\n- anticipation\n- surprise\n- fear\n- sadness\n- anger\n- disgust\n"
@@ -302,15 +358,8 @@ def _extract_json_object(raw: str) -> Optional[str]:
     return raw[s:e+1]
 
 def parse_llm_reply(raw: str, emotion_fallback: str) -> Dict[str, Any]:
-    """
-    LLMからの生返答をパースし、必ず:
-      - text: str
-      - heart_delta: int（-10..+10 に丸め）
-      - emotion: 8キー（英語）に正規化
-    """
     raw_json = _extract_json_object(raw)
     if not raw_json:
-        # JSONじゃない時：文章をそのまま返し、emotion は fallback、delta は 0
         return {"text": raw.strip(), "heart_delta": 0, "emotion": emotion_fallback}
 
     try:
@@ -322,14 +371,12 @@ def parse_llm_reply(raw: str, emotion_fallback: str) -> Dict[str, Any]:
     if not isinstance(text, str):
         text = str(text)
 
-    # heart_delta
     try:
         hd = int(data.get("heart_delta", 0))
     except Exception:
         hd = 0
-    hd = clamp(hd, -10, 10)  # Phase1 仕様に合わせる（±10）
+    hd = clamp(hd, -10, 10)
 
-    # emotion（8キーに正規化）
     emotion = normalize_emotion(data.get("emotion"), emotion_fallback)
 
     return {"text": text, "heart_delta": hd, "emotion": emotion}
@@ -341,7 +388,6 @@ def parse_llm_reply(raw: str, emotion_fallback: str) -> Dict[str, Any]:
 def main():
     debug_log("TURN", "=" * 60)
 
-    # 引数なしでも落とさない（C側の初期描画を壊さない）
     if len(sys.argv) < 2:
         print(json.dumps(
             {"text": "…", "heart_delta": 0, "emotion": "trust", "affection": 0},
@@ -353,26 +399,27 @@ def main():
     debug_log("USER INPUT", user_text)
 
     build = load_build()
-    char = load_character(build["girl_id"])
+    char = load_character(build.get("girl_id", "himari"))
 
     system_prompt = build_system_prompt(char, build)
     debug_log("SYSTEM PROMPT", system_prompt)
 
-    # ===== messages 構築 =====
     messages: List[Dict[str, str]] = []
     messages.append({"role": "system", "content": system_prompt})
 
     log_obj = read_json_safe(CHAT_LOG_PATH, {"messages": []})
     log = log_obj.get("messages", [])
+    if not isinstance(log, list):
+        log = []
 
-    # 過去ログ（system は含めない）
     for m in log:
+        if not isinstance(m, dict):
+            continue
         role = m.get("role", "")
         content = m.get("content", "")
         if role in ("user", "assistant") and isinstance(content, str):
             messages.append({"role": role, "content": content})
 
-    # 今回の入力
     messages.append({"role": "user", "content": user_text})
 
     debug_log("MESSAGES SENT", json.dumps(messages, ensure_ascii=False, indent=2))
@@ -380,24 +427,20 @@ def main():
     raw = call_llm(messages)
     debug_log("RAW LLM RESPONSE", raw)
 
-    # ★fallback は「直前の感情」(neutralなし)
-    emotion_fallback = build.get("emotion", "trust")
-    if emotion_fallback not in EMOTION_KEYS:
-        emotion_fallback = "trust"
-
+    # ★ fallback は build.json ではなく chat log の直前 emotion
+    emotion_fallback = load_last_emotion_from_chat_log()
     parsed = parse_llm_reply(raw, emotion_fallback)
 
     debug_log(
         "PARSED RESULT",
-        f"text={parsed['text']}\nheart_delta={parsed['heart_delta']}\nemotion={parsed['emotion']}"
+        f"text={parsed['text']}\nheart_delta={parsed['heart_delta']}\nemotion={parsed['emotion']}\nfallback={emotion_fallback}"
     )
 
-    # build 更新
+    # build 更新（emotion は保存しない）
     build["affection"] = max(0, int(build.get("affection", 30)) + int(parsed["heart_delta"]))
-    build["emotion"] = parsed["emotion"]
     save_build(build)
 
-    # ログ更新（assistant は text だけを content に入れる：次回の文脈を汚さない）
+    # ログ更新（assistant は text だけを content に入れる）
     log.append({"role": "user", "content": user_text})
     log.append({
         "role": "assistant",
@@ -407,7 +450,6 @@ def main():
     })
     write_json_safe(CHAT_LOG_PATH, {"messages": log})
 
-    # C側に返す（emotion は必ず英語キー）
     print(json.dumps({
         "text": parsed["text"],
         "heart_delta": parsed["heart_delta"],

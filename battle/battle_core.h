@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "battle_types.h"
+#include "battle_cmd.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,17 +15,6 @@ typedef enum {
     BPHASE_RESOLVE,
     BPHASE_END
 } BattlePhase;
-
-typedef struct {
-    bool   has_move;
-    Pos    move_to;
-    int8_t skill_index; // -1 = wait
-    int8_t target;      // 0=hero, 1=girl（攻撃:敵 / 回復:味方）
-} UnitCmd;
-
-typedef struct {
-    UnitCmd cmd[2]; // [SLOT_HERO], [SLOT_GIRL]
-} TurnCmd;
 
 typedef struct {
     BattlePhase phase;

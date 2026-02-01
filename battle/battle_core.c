@@ -68,16 +68,23 @@ static void apply_heal(Unit *tgt, int amount) {
     // max_hp がまだ無いので上限クランプはしない
 }
 
-static void apply_aoe_enemy(BattleCore *b, Team enemy, Pos center, int dmg, int radius) {
+static void apply_aoe_mixed(BattleCore *b, Team actor_team, Pos center, int dmg, int radius) {
     if (!b) return;
     if (radius <= 0) radius = 1;
 
-    for (int s = 0; s < 2; s++) {
-        int idx = unit_index(enemy, (Slot)s);
-        Unit *u = &b->units[idx];
+    Team enemy = (actor_team == TEAM_P1) ? TEAM_P2 : TEAM_P1;
+
+    for (int i = 0; i < 4; i++) {
+        Unit *u = &b->units[i];
         if (!u->alive) continue;
-        if (manhattan(u->pos, center) <= radius) {
+        if (manhattan(u->pos, center) > radius) continue;
+
+        if (u->team == enemy) {
             apply_damage(u, dmg);
+        } else {
+            int half = dmg / 2; // 切り捨て
+            if (half < 1) half = 1;
+            apply_damage(u, half);
         }
     }
 }
@@ -155,7 +162,10 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
         if (!tgt->alive) return;
 
         // range check
-        if (!in_range_manhattan_units(att, tgt, sk->range)) return;
+        // 範囲攻撃は「射程なし」なので判定しない
+        if (sk->target == SKT_SINGLE) {
+            if (!in_range_manhattan_units(att, tgt, sk->range)) return;
+        }
 
         // ST不足なら不発（成立時のみ消費）
         if (!spend_st_if_possible(att, sk->st_cost)) return;
@@ -173,12 +183,19 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
     // -------------------------
     if (sk->type == SKTYPE_ATTACK) {
         Team enemy = (actor_team == TEAM_P1) ? TEAM_P2 : TEAM_P1;
-        int tidx = unit_index(enemy, ts);
-        Unit *tgt = &b->units[tidx];
-        if (!tgt->alive) return;
+        Unit *tgt = NULL;
+        int tidx = -1;
 
-        // range check（成立条件）
-        if (!in_range_manhattan_units(att, tgt, sk->range)) return;
+        if (sk->target == SKT_SINGLE) {
+            tidx = unit_index(enemy, ts);
+            tgt = &b->units[tidx];
+            if (!tgt->alive) return;
+        }
+// range check（成立条件）
+        // 範囲攻撃は「射程なし」なので判定しない
+        if (sk->target == SKT_SINGLE) {
+            if (!in_range_manhattan_units(att, tgt, sk->range)) return;
+        }
 
         // ST不足なら不発（成立時のみ消費）
         if (!spend_st_if_possible(att, sk->st_cost)) return;
@@ -186,20 +203,31 @@ static void do_skill(BattleCore *b, Team actor_team, Slot actor_slot, const Unit
         int dmg = calc_atk_plus_power(att, sk->power);
 
         // 反撃フラグを先に見ておく（攻撃を受けた瞬間に発動判定したい）
-        bool had_counter = b->counter_ready[tidx];
-        int  crange = b->counter_range[tidx];
-        int  cpower = b->counter_power[tidx];
+        // 反撃フラグ（単体攻撃のときだけ参照）
+        bool had_counter = false;
+        int  crange = 0;
+        int  cpower = 0;
+        if (sk->target == SKT_SINGLE && tidx >= 0) {
+            had_counter = b->counter_ready[tidx];
+            crange = b->counter_range[tidx];
+            cpower = b->counter_power[tidx];
+        }
 
-        if (sk->tgt == SKT_SINGLE) {
+        if (sk->target == SKT_SINGLE) {
             apply_damage(tgt, dmg);
         } else {
+            // 範囲攻撃：中心はコマンド側で指定（射程判定なし）
+            Pos c = uc->center;
+            c.x = (int8_t)clampi((int)c.x, 0, 20);
+            c.y = (int8_t)clampi((int)c.y, 0, 20);
+
             int r = (sk->aoe_radius <= 0) ? 1 : sk->aoe_radius;
-            apply_aoe_enemy(b, enemy, tgt->pos, dmg, r);
+            apply_aoe_mixed(b, actor_team, c, dmg, r);
         }
 
         // カウンター：単体攻撃に対してのみ発動（AOEは一旦不発にして読み合いを単純化）
         // ※必要なら「AOEでも中心対象が被弾したら発動」等に後で拡張
-        if (had_counter && sk->tgt == SKT_SINGLE) {
+        if (had_counter && sk->target == SKT_SINGLE && tgt) {
             // 構えは消費（発動してもしなくても解除する設計）
             b->counter_ready[tidx] = false;
 

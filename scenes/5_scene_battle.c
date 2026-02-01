@@ -19,6 +19,7 @@
 #include <stdlib.h> // abs
 #include <math.h>   // fabsf, roundf, expf, lroundf
 
+
 // ===============================
 //  表示/フォント
 // ===============================
@@ -66,6 +67,15 @@ static bool g_p2_locked = false;
 #define INIT_HERO_Y 10
 #define INIT_GIRL_Y 12
 
+
+// ===============================
+//  UIレイアウト（右側パネル）
+// ===============================
+#define PANEL_X 620
+#define PANEL_Y 300
+#define PANEL_W 620
+#define PANEL_H 320
+
 // ===============================
 //  UI状態
 //  攻撃/待機：コマンド → 移動 →（攻撃なら）技 →（主人公→相棒）→ 最終確認
@@ -74,6 +84,8 @@ typedef enum {
     UI_CMD_SELECT = 0,
     UI_MOVE_SELECT,
     UI_SKILL_SELECT,
+    UI_TARGET_SELECT,
+    UI_AOE_CENTER_SELECT,
     UI_TURN_CONFIRM
 } BattleUiState;
 
@@ -97,6 +109,7 @@ static Slot g_act_slot = SLOT_HERO;
 // 選択情報（攻撃時の技とターゲット）
 static int g_skill_index[2] = {0, 0};  // slotごとのskill index
 static int g_target = 0;               // 0=enemy hero, 1=enemy girl（単体用）
+static Pos g_aoe_center_cursor = {10,10}; // AOE中心カーソル（UI_AOE_CENTER_SELECT）
 
 // 移動カーソル
 static Pos g_move_to = {0, 0};
@@ -110,6 +123,8 @@ typedef struct {
     Pos   move_to;
     int8_t skill_index; // -1=技なし（待機）
     int8_t target;      // -1=なし
+    bool  has_center;   // AOE中心指定が必要な技
+    Pos   center;       // AOE中心（has_center==falseなら無視）
 } UnitPlan;
 
 static UnitPlan g_plan_p1[2];
@@ -286,15 +301,24 @@ static int read_int_or(const char *key, int fallback)
 static bool g_p1_tag_learned = false;
 static bool g_p2_tag_learned = false;
 
-static void read_girl_info(char *out_id, size_t out_sz, bool *out_tag)
+static void read_girl_info(char *out_id, size_t out_sz, bool *out_tag_learned)
 {
-    snprintf(out_id, out_sz, "himari");
-    *out_tag = false;
+    if (!out_id || out_sz == 0 || !out_tag_learned) return;
+
+    char tmp[64] = "himari";
+    (void)json_read_string("build.json", "girl_id", tmp, (int)sizeof(tmp));
+
+    if (out_sz == 1) { out_id[0] = '\0'; }
+    else {
+        snprintf(out_id, out_sz, "%.*s", (int)out_sz - 1, tmp);
+    }
 
     int tag = 0;
-    json_read_int("build.json", "tag_learned", &tag);
-    *out_tag = (tag != 0);
+    (void)json_read_int("build.json", "tag_learned", &tag);
+    *out_tag_learned = (tag != 0);
 }
+
+
 
 // 相棒の移動距離
 static int get_partner_move_range(void)
@@ -317,6 +341,28 @@ static bool is_tag_learned_for_unit(const Unit *u)
     if (!u) return false;
     if (u->slot == SLOT_HERO) return false; // heroは tag_skill_id=NULL なので常にfalseでOK
     return (u->team == TEAM_P1) ? g_p1_tag_learned : g_p2_tag_learned;
+}
+
+
+// ★skill_index -> skill_id -> SkillDef（scene側でも参照する）
+static const char* resolve_skill_id_for_unit(const Unit *u, int skill_index)
+{
+    if (!u) return NULL;
+    if (skill_index < 0) return NULL;
+
+    const CharDef *cd = char_def_get(u->char_id);
+    if (!cd) return NULL;
+
+    bool tag = is_tag_learned_for_unit(u);
+    // char_defs 側の公開APIに合わせる
+    return char_def_get_skill_id_at(cd, tag, skill_index);
+}
+
+static const SkillDef* resolve_skill_def_for_unit(const Unit *u, int skill_index)
+{
+    const char *skill_id = resolve_skill_id_for_unit(u, skill_index);
+    if (!skill_id) return NULL;
+    return battle_skill_get(skill_id);
 }
 
 // ★char_defs に合わせた「技数」
@@ -489,8 +535,8 @@ static void init_battle_core(void)
 // ===============================
 static void build_p1_cmd_from_plan(TurnCmd *out_cmd)
 {
-    out_cmd->cmd[SLOT_HERO] = (UnitCmd){ .has_move=false, .move_to={0,0}, .skill_index=-1, .target=-1 };
-    out_cmd->cmd[SLOT_GIRL] = (UnitCmd){ .has_move=false, .move_to={0,0}, .skill_index=-1, .target=-1 };
+    out_cmd->cmd[SLOT_HERO] = (UnitCmd){ .has_move=false, .move_to={0,0}, .skill_index=-1, .target=-1, .center={0,0} };
+    out_cmd->cmd[SLOT_GIRL] = (UnitCmd){ .has_move=false, .move_to={0,0}, .skill_index=-1, .target=-1, .center={0,0} };
 
     for (int s = 0; s < 2; s++) {
         UnitPlan *pl = &g_plan_p1[s];
@@ -499,6 +545,8 @@ static void build_p1_cmd_from_plan(TurnCmd *out_cmd)
         uc.move_to     = pl->move_to;
         uc.skill_index = pl->skill_index;
         uc.target      = pl->target;
+        // center は常に in-bounds になるように埋める（非AOEは move_to を入れておく）
+        uc.center      = pl->has_center ? pl->center : pl->move_to;
         out_cmd->cmd[s] = uc;
     }
 }
@@ -699,10 +747,12 @@ static const char* slot_label(Slot s)
 static const char* ui_state_label(BattleUiState st)
 {
     switch (st) {
-    case UI_CMD_SELECT:   return "コマンド";
-    case UI_MOVE_SELECT:  return "移動";
-    case UI_SKILL_SELECT: return "技";
-    case UI_TURN_CONFIRM: return "確認";
+    case UI_CMD_SELECT:         return "コマンド";
+    case UI_MOVE_SELECT:        return "移動";
+    case UI_SKILL_SELECT:       return "技";
+    case UI_TARGET_SELECT:      return "対象";
+    case UI_AOE_CENTER_SELECT:  return "中心";
+    case UI_TURN_CONFIRM:       return "確認";
     default: return "?";
     }
 }
@@ -908,7 +958,7 @@ static void draw_battle_grid(SDL_Renderer *r, int origin_x, int origin_y, int ce
     }
 
     // --- 追加：ターゲットをマップ上でハイライト ---
-if (!g_exec_active && !g_p1_locked && g_ui == UI_SKILL_SELECT) {
+if (!g_exec_active && !g_p1_locked && g_ui == UI_TARGET_SELECT) {
     Team enemy = TEAM_P2;
     Slot ts = (g_target == 1) ? SLOT_GIRL : SLOT_HERO;
     int tidx = unit_index(enemy, ts);
@@ -991,6 +1041,8 @@ static void p1_finalize_current_unit_wait(void)
     pl->move_to = g_move_to;
     pl->skill_index = -1;
     pl->target = -1;
+    pl->has_center = false;
+    pl->center = pl->move_to;
 
     g_preview_active[g_act_slot] = true;
     g_preview_pos[g_act_slot] = g_move_to;
@@ -1009,14 +1061,16 @@ static void p1_finalize_current_unit_wait(void)
 }
 
 // 決定処理（攻撃）
-static void p1_finalize_current_unit_attack(void)
+static void p1_finalize_current_unit_skill(int8_t target, bool has_center, Pos center)
 {
     UnitPlan *pl = &g_plan_p1[g_act_slot];
     pl->decided = true;
     pl->has_move = true;
     pl->move_to = g_move_to;
     pl->skill_index = (int8_t)g_skill_index[g_act_slot];
-    pl->target = (int8_t)g_target;
+    pl->target = target;
+    pl->has_center = has_center;
+    pl->center = center;
 
     g_preview_active[g_act_slot] = true;
     g_preview_pos[g_act_slot] = g_move_to;
@@ -1033,6 +1087,20 @@ static void p1_finalize_current_unit_attack(void)
         g_confirm = CONFIRM_YES;
     }
 }
+
+static void p1_finalize_current_unit_attack(void)
+{
+    // 単体攻撃は target を使う（0=enemy hero, 1=enemy girl）
+    p1_finalize_current_unit_skill((int8_t)g_target, false, (Pos){0,0});
+}
+
+static void p1_finalize_current_unit_aoe(void)
+{
+    // 範囲攻撃は center を使う（targetは未使用）
+    p1_finalize_current_unit_skill(-1, true, g_aoe_center_cursor);
+}
+
+
 
 void scene_battle_update(float dt)
 {
@@ -1063,7 +1131,9 @@ void scene_battle_update(float dt)
         return;
     }
 
-    // P1入力（主人公→相棒の順）
+    // ===============================
+    // P1入力（主人公→相棒）
+    // ===============================
     if (!g_p1_locked) {
 
         if (g_ui == UI_CMD_SELECT) {
@@ -1079,6 +1149,7 @@ void scene_battle_update(float dt)
                 g_ui = UI_MOVE_SELECT;
             }
         }
+
         else if (g_ui == UI_MOVE_SELECT) {
             if (input_is_pressed(SDL_SCANCODE_UP))    g_move_to.y--;
             if (input_is_pressed(SDL_SCANCODE_DOWN))  g_move_to.y++;
@@ -1098,15 +1169,18 @@ void scene_battle_update(float dt)
 
                 undo_push();
 
-                if (g_cmd == CMD_ATTACK) g_ui = UI_SKILL_SELECT;
-                else p1_finalize_current_unit_wait();
+                if (g_cmd == CMD_ATTACK) {
+                    g_ui = UI_SKILL_SELECT;
+                } else {
+                    p1_finalize_current_unit_wait();
+                }
             }
         }
+
         else if (g_ui == UI_SKILL_SELECT) {
             int idx = unit_index(TEAM_P1, g_act_slot);
             const Unit *u = &g_core.units[idx];
 
-            // ★char_defs に合わせた技数
             int max_skill = get_skill_count_for_unit(u);
             if (max_skill < 1) max_skill = 1;
 
@@ -1119,17 +1193,78 @@ void scene_battle_update(float dt)
                 if (g_skill_index[g_act_slot] > (max_skill - 1)) g_skill_index[g_act_slot] = (max_skill - 1);
             }
 
-            if (input_is_pressed(SDL_SCANCODE_T)) g_target = 1 - g_target;
-
             if (input_is_pressed(SDL_SCANCODE_RETURN)) {
                 // 念のためクランプ
                 if (g_skill_index[g_act_slot] < 0) g_skill_index[g_act_slot] = 0;
                 if (g_skill_index[g_act_slot] > (max_skill - 1)) g_skill_index[g_act_slot] = (max_skill - 1);
 
+                const SkillDef *sk = resolve_skill_def_for_unit(u, g_skill_index[g_act_slot]);
+
+                undo_push();
+
+                // 技辞書が無い場合は単体攻撃扱い
+                if (!sk) {
+                    g_target = 0;
+                    g_ui = UI_TARGET_SELECT;
+                }
+                else if (sk->type == SKTYPE_ATTACK) {
+                    if (sk->target == SKT_SINGLE) {
+                        g_target = 0;
+                        g_ui = UI_TARGET_SELECT;
+                    } else if (sk->target == SKT_AOE) {
+                        // 範囲攻撃：中心指定（射程なし）
+                        g_aoe_center_cursor = g_core.units[unit_index(TEAM_P2, SLOT_HERO)].pos;
+                        g_ui = UI_AOE_CENTER_SELECT;
+                    } else {
+                        g_target = 0;
+                        g_ui = UI_TARGET_SELECT;
+                    }
+                }
+                else if (sk->type == SKTYPE_HEAL) {
+                    // 回復：対象選択なし（いったん自分固定）
+                    int8_t self_target = (g_act_slot == SLOT_GIRL) ? 1 : 0;
+                    p1_finalize_current_unit_skill(self_target, false, (Pos){0,0});
+                }
+                else if (sk->type == SKTYPE_COUNTER) {
+                    // カウンター：対象選択なし
+                    p1_finalize_current_unit_skill(-1, false, (Pos){0,0});
+                }
+                else {
+                    // 想定外も安全に確定
+                    p1_finalize_current_unit_skill(-1, false, (Pos){0,0});
+                }
+            }
+        }
+
+        else if (g_ui == UI_TARGET_SELECT) {
+            // 単体攻撃：対象選択（敵 hero/girl）
+            if (input_is_pressed(SDL_SCANCODE_LEFT) || input_is_pressed(SDL_SCANCODE_RIGHT) ||
+                input_is_pressed(SDL_SCANCODE_UP)   || input_is_pressed(SDL_SCANCODE_DOWN) ||
+                input_is_pressed(SDL_SCANCODE_T)) {
+                g_target = 1 - g_target;
+            }
+
+            if (input_is_pressed(SDL_SCANCODE_RETURN)) {
                 undo_push();
                 p1_finalize_current_unit_attack();
             }
         }
+
+        else if (g_ui == UI_AOE_CENTER_SELECT) {
+            // 範囲攻撃：中心位置指定（射程なし）
+            if (input_is_pressed(SDL_SCANCODE_UP))    g_aoe_center_cursor.y--;
+            if (input_is_pressed(SDL_SCANCODE_DOWN))  g_aoe_center_cursor.y++;
+            if (input_is_pressed(SDL_SCANCODE_LEFT))  g_aoe_center_cursor.x--;
+            if (input_is_pressed(SDL_SCANCODE_RIGHT)) g_aoe_center_cursor.x++;
+
+            clamp_move_cursor(&g_aoe_center_cursor);
+
+            if (input_is_pressed(SDL_SCANCODE_RETURN)) {
+                undo_push();
+                p1_finalize_current_unit_aoe();
+            }
+        }
+
         else if (g_ui == UI_TURN_CONFIRM) {
             if (input_is_pressed(SDL_SCANCODE_LEFT) || input_is_pressed(SDL_SCANCODE_UP)) {
                 g_confirm = CONFIRM_YES;
@@ -1145,6 +1280,7 @@ void scene_battle_update(float dt)
                     g_p1_locked = true;
                     g_ui = UI_CMD_SELECT;
                 } else {
+                    // いったん相棒からやり直し
                     undo_push();
                     g_ui = UI_CMD_SELECT;
                     g_act_slot = SLOT_GIRL;
@@ -1157,15 +1293,18 @@ void scene_battle_update(float dt)
         }
     }
 
+    // ===============================
     // P2側：ローカル仮（オンライン時は受信へ）
+    // ===============================
     if (!g_p2_locked) {
-        g_p2_cmd.cmd[SLOT_HERO] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[2].pos, .skill_index=0,  .target=0 };
-        g_p2_cmd.cmd[SLOT_GIRL] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[3].pos, .skill_index=-1, .target=-1 };
+        g_p2_cmd.cmd[SLOT_HERO] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[2].pos, .skill_index=0,  .target=0, .center=g_core.units[2].pos };
+        g_p2_cmd.cmd[SLOT_GIRL] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[3].pos, .skill_index=-1, .target=-1, .center=g_core.units[3].pos };
         g_p2_locked = true;
     }
 
     try_advance_turn_local();
 }
+
 
 void scene_battle_render(SDL_Renderer *r)
 {
@@ -1297,46 +1436,59 @@ void scene_battle_render(SDL_Renderer *r)
             ui_text_draw(r, g_font, "←↑:はい  →↓:いいえ  Enter:決定  Q:1手戻し  Esc:強制終了", 80, 692);
         }
         else if (!g_p1_locked && g_ui == UI_SKILL_SELECT) {
+            // 技選択（移動後に使用技を決める）
             int idx = unit_index(TEAM_P1, g_act_slot);
             const Unit *u = &g_core.units[idx];
+            int max_skill = get_skill_count_for_unit(u);
+            if (max_skill < 1) max_skill = 1;
 
-            int count = get_skill_count_for_unit(u);
-            if (count < 1) count = 1;
+            const int x0 = PANEL_X + 10;
+            const int y0 = PANEL_Y + 10;
+            const int w = PANEL_W - 20;
+            const int h = 56;
+            const int gap = 8;
 
-            int base_x = 140;
-            int gap = 24;
-            int box_w = 180;
-            int box_h = 34;
-
-            int sidx = g_skill_index[g_act_slot];
-            if (sidx < 0) sidx = 0;
-            if (sidx > (count - 1)) sidx = (count - 1);
-
-            for (int i = 0; i < count; i++) {
-                int bx = base_x + i * (box_w + gap);
-                SDL_Rect box = { bx, y - 6, box_w, box_h };
-
-                set_color(r, 30, 30, 45, 255);
+            for (int i = 0; i < max_skill; i++) {
+                SDL_Rect box = { x0, y0 + i*(h+gap), w, h };
+                SDL_SetRenderDrawColor(r, 30, 30, 35, 255);
                 SDL_RenderFillRect(r, &box);
 
-                if (i == sidx) {
-                    set_color(r, 55, 55, 85, 255);
-                    SDL_RenderFillRect(r, &box);
+                if (i == g_skill_index[g_act_slot]) {
+                    SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
+                } else {
+                    SDL_SetRenderDrawColor(r, 100, 100, 110, 255);
                 }
-
-                set_color(r, 110, 110, 150, 255);
                 SDL_RenderDrawRect(r, &box);
 
-                char label[32];
-                snprintf(label, sizeof(label), "技%d", i + 1);
-                ui_text_draw(r, g_font, label, bx + 60, y);
+                const char *sid = resolve_skill_id_for_unit(u, i);
+                const SkillDef *sk = battle_skill_get(sid);
 
-                if (i == sidx) {
-                    draw_triangle_right(r, bx - 14, y + 14, 20, 255, 60, 60, 230);
+                char line[128];
+                if (sk) {
+                    // AOEは射程表示はUI側では省略（今回「射程なし」仕様）
+                    snprintf(line, sizeof(line), "%d:%s  ST:%d", i+1, sk->name, sk->st_cost);
+                } else {
+                    snprintf(line, sizeof(line), "%d: (unknown)", i+1);
                 }
+                ui_text_draw(r, g_font, line, box.x + 10, box.y + 18);
             }
 
-            ui_text_draw(r, g_font, "←→:技選択  T:ターゲット  Enter:確定  Q:1手戻し  Esc:強制終了", 80, 692);
+            ui_text_draw(r, g_font, "←→ 技選択  Enter 決定", PANEL_X + 10, PANEL_Y + PANEL_H - 28);
+        }
+        else if (!g_p1_locked && g_ui == UI_TARGET_SELECT) {
+            // 対象選択（単体攻撃のみ）
+            const char *tname = (g_target == 0) ? "敵主人公" : "敵相棒";
+            char line[128];
+            snprintf(line, sizeof(line), "対象: %s", tname);
+            ui_text_draw(r, g_font, line, PANEL_X + 10, PANEL_Y + 18);
+            ui_text_draw(r, g_font, "矢印/T 切替  Enter 確定", PANEL_X + 10, PANEL_Y + PANEL_H - 28);
+        }
+        else if (!g_p1_locked && g_ui == UI_AOE_CENTER_SELECT) {
+            // 範囲攻撃：中心指定
+            char line[128];
+            snprintf(line, sizeof(line), "中心: (%d,%d)", (int)g_aoe_center_cursor.x, (int)g_aoe_center_cursor.y);
+            ui_text_draw(r, g_font, line, PANEL_X + 10, PANEL_Y + 18);
+            ui_text_draw(r, g_font, "矢印 移動  Enter 確定", PANEL_X + 10, PANEL_Y + PANEL_H - 28);
         }
         else {
             int attack_x = 140;

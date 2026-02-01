@@ -12,7 +12,8 @@ typedef struct {
     bool has_move;
     Pos  move_to;         // has_move==falseなら無視
     int8_t skill_index;   // -1..3
-    int8_t target;        // 単体技のみ：敵のslot指定 (0=hero,1=girl) / 範囲技は -1
+    int8_t target;        // 単体技のみ：敵/味方のslot指定 (0=hero,1=girl) / 範囲技は -1
+    Pos  center;          // 範囲技のみ：中心座標（それ以外は無視。未初期化防止のため常にin-bounds推奨）
 } UnitCmd;
 
 typedef struct {
@@ -21,7 +22,7 @@ typedef struct {
 
 // serializeは「将来のSDL_net/UDP/TCP」でも使えるように固定長にする
 // 1TurnCmd = 2UnitCmd * (1+2+1+1) = 10 bytes程度で収まる
-#define TURNCMD_WIRE_BYTES 10
+#define TURNCMD_WIRE_BYTES 14
 
 bool battle_cmd_pack(const TurnCmd* in, uint8_t out[TURNCMD_WIRE_BYTES]);
 bool battle_cmd_unpack(const uint8_t in[TURNCMD_WIRE_BYTES], TurnCmd* out);

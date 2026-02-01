@@ -62,7 +62,7 @@ static void strip_trailing_comma(char *s)
 // =============================================================
 static char *json_set_key(const char *json, const char *key, const char *value)
 {
-    size_t out_cap = strlen(json) + strlen(key) + strlen(value) + 128;
+    size_t out_cap = strlen(json) + strlen(key) + strlen(value) + 256;
     char *out = (char *)malloc(out_cap);
     if (!out) return NULL;
 
@@ -76,9 +76,9 @@ static char *json_set_key(const char *json, const char *key, const char *value)
         const char *kend = strchr(p + 1, '"');
         if (!kend) break;
 
-        size_t klen = kend - (p + 1);
+        size_t klen = (size_t)(kend - (p + 1));
         char cur_key[128];
-        if (klen >= sizeof(cur_key)) break;
+        if (klen == 0 || klen >= sizeof(cur_key)) break;
         strncpy(cur_key, p + 1, klen);
         cur_key[klen] = '\0';
 
@@ -88,21 +88,33 @@ static char *json_set_key(const char *json, const char *key, const char *value)
         const char *line_end = strchr(colon, '\n');
         if (!line_end) line_end = colon + strlen(colon);
 
-        char linebuf[512];
+        // 値部分を抜き出してトリム（末尾カンマも除去）
+        const char *vs = colon + 1;
+        while (vs < line_end && isspace((unsigned char)*vs)) vs++;
+
+        const char *ve = line_end;
+        while (ve > vs && isspace((unsigned char)ve[-1])) ve--;
+        if (ve > vs && ve[-1] == ',') ve--;                 // 末尾カンマ除去
+        while (ve > vs && isspace((unsigned char)ve[-1])) ve--;
+
+        char valbuf[512];
+        size_t vlen = (size_t)(ve - vs);
+        if (vlen >= sizeof(valbuf)) vlen = sizeof(valbuf) - 1;
+        memcpy(valbuf, vs, vlen);
+        valbuf[vlen] = '\0';
+
+        char linebuf[768];
 
         if (strcmp(cur_key, key) == 0)
         {
-            snprintf(linebuf, sizeof(linebuf),
-                     "  \"%s\": %s,\n", key, value);
+            // 指定キーは上書き（valueは呼び出し側で "..." など整形済み）
+            snprintf(linebuf, sizeof(linebuf), "  \"%s\": %s,\n", key, value);
             written = true;
         }
         else
         {
-            size_t len = line_end - p;
-            if (len >= sizeof(linebuf)) len = sizeof(linebuf) - 1;
-            strncpy(linebuf, p, len);
-            linebuf[len] = '\0';
-            strcat(linebuf, "\n");
+            // 既存キーも必ず「正規化して」出力（←ここが重要）
+            snprintf(linebuf, sizeof(linebuf), "  \"%s\": %s,\n", cur_key, valbuf);
         }
 
         strcat(out, linebuf);
@@ -119,6 +131,7 @@ static char *json_set_key(const char *json, const char *key, const char *value)
     strcat(out, "\n}\n");
     return out;
 }
+
 
 // =============================================================
 // write API
