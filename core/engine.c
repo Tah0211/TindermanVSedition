@@ -56,8 +56,8 @@ bool engine_init(void)
     g_window = SDL_CreateWindow(
         "TVSE",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1280, 720,
-        SDL_WINDOW_FULLSCREEN_DESKTOP
+        800, 600,
+        SDL_WINDOW_SHOWN
     );
     if (!g_window) {
         SDL_Log("Window create failed: %s", SDL_GetError());

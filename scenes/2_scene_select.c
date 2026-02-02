@@ -119,6 +119,7 @@ static Uint32 start_ms;
 static Uint32 deadline_ms;
 static Uint32 finalize_start_ms;
 
+
 static Mix_Chunk *voice_girl[3] = {NULL};
 
 static float glow_t = 0.0f;
