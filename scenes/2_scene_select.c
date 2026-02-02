@@ -108,8 +108,12 @@ static int decided_index = -1;
 static bool finalizing = false;
 static bool pending_finalize = false;
 
-// オンライン対戦: マッチング待ち状態
-static bool online_matching = false;
+// オンライン対戦: 接続・マッチング状態
+static bool connecting_to_server = false;  // サーバ接続中
+static bool online_matching = false;       // マッチング待ち
+static Uint32 last_connect_attempt_ms = 0; // 最後の接続試行時刻
+static int connect_retry_count = 0;        // 接続リトライ回数
+#define CONNECT_RETRY_INTERVAL_MS 2000     // 2秒ごとにリトライ
 
 static Uint32 start_ms;
 static Uint32 deadline_ms;
@@ -348,10 +352,24 @@ void scene_select_enter(void)
     pending_finalize = false;
     glow_t = 0.0f;
 
-    // オンライン: READY送信済みならマッチング待ちから開始
-    online_matching = net_is_online() && (net_get_player_id() < 0);
-    printf("[SELECT] enter: online=%d, player_id=%d, online_matching=%d\n",
-           net_is_online(), net_get_player_id(), online_matching);
+    // サーバ接続を試みる（リトライ処理付き）
+    connecting_to_server = true;
+    online_matching = false;
+    connect_retry_count = 0;
+    last_connect_attempt_ms = SDL_GetTicks();
+
+    SDL_Log("[SELECT] サーバ接続を開始します: %s:%d", g_net_host, g_net_port);
+    net_connect(g_net_host, g_net_port);
+
+    if (net_is_online()) {
+        net_send_ready();
+        SDL_Log("[SELECT] サーバに接続しました。マッチング待ち...");
+        connecting_to_server = false;
+        online_matching = true;
+    } else {
+        SDL_Log("[SELECT] サーバ接続中... (試行 1回目)");
+        connect_retry_count = 1;
+    }
 }
 
 // ==============================================================
@@ -359,21 +377,57 @@ void scene_select_enter(void)
 // ==============================================================
 void scene_select_update(float dt)
 {
+    // サーバ接続中（リトライ処理）
+    if (connecting_to_server) {
+        Uint32 now = SDL_GetTicks();
+
+        // 接続成功チェック
+        if (net_is_online()) {
+            net_send_ready();
+            SDL_Log("[SELECT] サーバに接続しました。マッチング待ち...");
+            connecting_to_server = false;
+            online_matching = true;
+            return;
+        }
+
+        // リトライ間隔経過後、再接続を試みる
+        if (now - last_connect_attempt_ms >= CONNECT_RETRY_INTERVAL_MS) {
+            connect_retry_count++;
+            last_connect_attempt_ms = now;
+
+            SDL_Log("[SELECT] サーバ接続を再試行します... (試行 %d回目)", connect_retry_count);
+            net_connect(g_net_host, g_net_port);
+
+            if (net_is_online()) {
+                net_send_ready();
+                SDL_Log("[SELECT] サーバに接続しました。マッチング待ち...");
+                connecting_to_server = false;
+                online_matching = true;
+                return;
+            }
+        }
+
+        return;
+    }
+
     // オンラインマッチング待ち
     if (online_matching) {
         net_poll();
         if (!net_is_online()) {
+            SDL_Log("[SELECT] 接続が切断されました。HOMEに戻ります。");
             online_matching = false;
             change_scene(SCENE_HOME);
             return;
         }
         if (net_get_player_id() >= 0) {
             // マッチング成立 → 通常のキャラ選択へ
+            SDL_Log("[SELECT] マッチング成立! Player ID: %d", net_get_player_id());
             online_matching = false;
             start_ms = SDL_GetTicks();
             deadline_ms = start_ms + 15000;
         }
         if (input_is_pressed(SDL_SCANCODE_ESCAPE)) {
+            SDL_Log("[SELECT] マッチングをキャンセルしました。");
             net_disconnect();
             online_matching = false;
             change_scene(SCENE_HOME);
@@ -432,9 +486,15 @@ void scene_select_render(SDL_Renderer *R)
                  ? (int)((deadline_ms - SDL_GetTicks()) / 1000)
                  : 0;
 
+    // サーバ接続中表示
+    if (connecting_to_server) {
+        ui_text_draw(R, font_main, "サーバに接続中...", 440, 340);
+        return;
+    }
+
     // マッチング待ち表示
     if (online_matching) {
-        ui_text_draw(R, font_main, "マッチング待ち...", 460, 390);
+        ui_text_draw(R, font_main, "マッチング待ち...", 460, 340);
         return;
     }
 

@@ -5,7 +5,6 @@
 #include "../util/texture.h"
 #include "../ui/ui_text.h"
 #include "../ui/ui_button.h"
-#include "../net/net_client.h"
 
 // ホーム画面データ
 static SDL_Texture *bg_title = NULL;
@@ -59,10 +58,6 @@ void scene_home_update(float dt)
 
     if (input_is_pressed(SDL_SCANCODE_RETURN)) {
         if (focus == 0) {
-            // サーバ接続を試みる（失敗してもオフラインで続行）
-            net_connect(g_net_host, g_net_port);
-            if (net_is_online())
-                net_send_ready();
             start_transition = true;
             start_timer = 0.0f;
         }
