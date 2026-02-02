@@ -1,12 +1,21 @@
 #include <SDL2/SDL.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "core/engine.h"
 #include "core/scene_manager.h"
 #include "core/input.h"
+#include "net/net_client.h"
 
 int main(int argc, char **argv)
 {
-    (void)argc; (void)argv;
+    for (int i = 1; i < argc; i++) {
+        if ((strcmp(argv[i], "--hostname") == 0 || strcmp(argv[i], "-h") == 0) && i + 1 < argc) {
+            g_net_host = argv[++i];
+        } else if ((strcmp(argv[i], "--port") == 0 || strcmp(argv[i], "-p") == 0) && i + 1 < argc) {
+            g_net_port = atoi(argv[++i]);
+        }
+    }
 
     if (!engine_init()) {
         SDL_Log("Engine init failed");

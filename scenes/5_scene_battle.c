@@ -9,7 +9,8 @@
 #include "battle/battle_core.h"
 #include "battle/battle_skills.h"
 #include "battle/cutin.h"
-#include "battle/char_defs.h"   // ★追加：char_defs に合わせる
+#include "battle/char_defs.h"
+#include "../net/net_client.h"
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
@@ -86,7 +87,58 @@ static const char* choose_cutin_mp4(const char *skill_id, int target_ui, char *o
 }
 
 // ===============================
-//  ローカル宣言（いまはローカル用）
+//  オンライン対戦用状態
+// ===============================
+static bool g_online_mode = false;
+static bool g_waiting_opponent_info = false;  // GAME_INFO交換待ち
+static NetGameInfo g_opponent_info;
+static bool g_sent_turn_cmd = false;
+
+// build.jsonから自分のGAME_INFOを構築して送信
+static void send_my_game_info(void)
+{
+    NetGameInfo info;
+    memset(&info, 0, sizeof(info));
+
+    char girl_id[64] = "himari";
+    (void)json_read_string("build.json", "girl_id", girl_id, (int)sizeof(girl_id));
+    snprintf(info.girl_id, sizeof(info.girl_id), "%s", girl_id);
+
+    int v = 0;
+    json_read_int("build.json", "hp_base",  &v); info.hp_base  = (int16_t)v; v = 0;
+    json_read_int("build.json", "atk_base", &v); info.atk_base = (int16_t)v; v = 0;
+    json_read_int("build.json", "sp_base",  &v); info.sp_base  = (int16_t)v; v = 0;
+    json_read_int("build.json", "st_base",  &v); info.st_base  = (int16_t)v; v = 0;
+    json_read_int("build.json", "hp_add",   &v); info.hp_add   = (int16_t)v; v = 0;
+    json_read_int("build.json", "atk_add",  &v); info.atk_add  = (int16_t)v; v = 0;
+    json_read_int("build.json", "sp_add",   &v); info.sp_add   = (int16_t)v; v = 0;
+    json_read_int("build.json", "st_add",   &v); info.st_add   = (int16_t)v; v = 0;
+
+    int tag = 0;
+    json_read_int("build.json", "tag_learned", &tag);
+    info.tag_learned = (uint8_t)(tag ? 1 : 0);
+
+    int mr = 3;
+    json_read_int("build.json", "move_range_base", &mr);
+    info.move_range = (uint8_t)mr;
+
+    net_send_game_info(&info);
+}
+
+// 受信したTurnCmdのx座標をミラーリング (20-x)
+static void mirror_turn_cmd(TurnCmd *cmd)
+{
+    for (int s = 0; s < 2; s++) {
+        UnitCmd *uc = &cmd->cmd[s];
+        if (uc->has_move) {
+            uc->move_to.x = 20 - uc->move_to.x;
+        }
+        uc->center.x = 20 - uc->center.x;
+    }
+}
+
+// ===============================
+//  ローカル宣言
 // ===============================
 static TurnCmd g_p1_cmd;
 static TurnCmd g_p2_cmd;
@@ -499,6 +551,9 @@ static void init_battle_core(void)
 {
     if (!g_font) g_font = ui_load_font("assets/font/main.otf", 28);
 
+    g_online_mode = net_is_online();
+    g_sent_turn_cmd = false;
+
     Stats p1h, p1g, p2h, p2g;
 
     p1h.hp  = HERO_HP_MAX;
@@ -523,17 +578,32 @@ static void init_battle_core(void)
         p1g.st  = st_base  + st_add;
     }
 
-    p2h = p1h;
-    p2g = p1g;
-
     char p1_girl_id[32];
     bool p1_tag = false;
     read_girl_info(p1_girl_id, sizeof(p1_girl_id), &p1_tag);
 
-    const char *p2_girl_id = "kiritan";
+    // P2ステータス: オンラインなら相手情報、オフラインなら自分のミラー
+    char p2_girl_id_buf[32];
+    const char *p2_girl_id;
     bool p2_tag = false;
 
-    // ★char_defs 用に保持
+    if (g_online_mode) {
+        p2h = p1h; // 主人公ステは共通固定
+        p2g.hp  = g_opponent_info.hp_base  + g_opponent_info.hp_add;
+        p2g.atk = g_opponent_info.atk_base + g_opponent_info.atk_add;
+        p2g.spd = g_opponent_info.sp_base  + g_opponent_info.sp_add;
+        p2g.st  = g_opponent_info.st_base  + g_opponent_info.st_add;
+        snprintf(p2_girl_id_buf, sizeof(p2_girl_id_buf), "%s", g_opponent_info.girl_id);
+        p2_girl_id = p2_girl_id_buf;
+        p2_tag = (g_opponent_info.tag_learned != 0);
+    } else {
+        p2h = p1h;
+        p2g = p1g;
+        snprintf(p2_girl_id_buf, sizeof(p2_girl_id_buf), "kiritan");
+        p2_girl_id = p2_girl_id_buf;
+        p2_tag = false;
+    }
+
     g_p1_tag_learned = p1_tag;
     g_p2_tag_learned = p2_tag;
 
@@ -698,6 +768,7 @@ static void exec_update(float dt)
         memset(&g_p2_cmd, 0, sizeof(g_p2_cmd));
         g_p1_locked = false;
         g_p2_locked = false;
+        g_sent_turn_cmd = false;
 
         g_exec_active = false;
         g_exec_stage = EXE_NONE;
@@ -1204,11 +1275,26 @@ static void draw_stat_panel(SDL_Renderer *r, int x, int y, int w, int h,
 // ===============================
 void scene_battle_enter(void)
 {
-    init_battle_core();
+    if (net_is_online()) {
+        // オンライン: GAME_INFO送信 → 相手の情報待ち
+        g_online_mode = true;
+        g_waiting_opponent_info = true;
+        g_inited = false;
+        if (!g_font) g_font = ui_load_font("assets/font/main.otf", 28);
+        send_my_game_info();
+    } else {
+        g_online_mode = false;
+        g_waiting_opponent_info = false;
+        init_battle_core();
+    }
 }
 
 void scene_battle_leave(void)
 {
+    if (g_online_mode) {
+        net_disconnect();
+        g_online_mode = false;
+    }
 }
 
 // 決定処理（待機）
@@ -1283,6 +1369,27 @@ static void p1_finalize_current_unit_aoe(void)
 
 void scene_battle_update(float dt)
 {
+    // オンライン: OPPONENT_INFO待ち
+    if (g_waiting_opponent_info) {
+        net_poll();
+        if (!net_is_online()) {
+            g_waiting_opponent_info = false;
+            change_scene(SCENE_HOME);
+            return;
+        }
+        if (net_received_opponent_info(&g_opponent_info)) {
+            g_waiting_opponent_info = false;
+            init_battle_core();
+        }
+        if (input_is_pressed(SDL_SCANCODE_ESCAPE)) {
+            net_disconnect();
+            g_waiting_opponent_info = false;
+            change_scene(SCENE_HOME);
+            return;
+        }
+        return;
+    }
+
     if (!g_inited) init_battle_core();
 
     bars_update(dt);
@@ -1473,12 +1580,32 @@ void scene_battle_update(float dt)
     }
 
     // ===============================
-    // P2側：ローカル仮（オンライン時は受信へ）
+    // P2側
     // ===============================
-    if (!g_p2_locked) {
-        g_p2_cmd.cmd[SLOT_HERO] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[2].pos, .skill_index=0,  .target=0, .center=g_core.units[2].pos };
-        g_p2_cmd.cmd[SLOT_GIRL] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[3].pos, .skill_index=-1, .target=-1, .center=g_core.units[3].pos };
-        g_p2_locked = true;
+    if (g_online_mode) {
+        // オンライン: P1コマンド確定時にサーバへ送信
+        if (g_p1_locked && !g_sent_turn_cmd) {
+            net_send_turn_cmd(&g_p1_cmd);
+            g_sent_turn_cmd = true;
+        }
+
+        // 相手のコマンド受信をポーリング
+        net_poll();
+        if (!g_p2_locked) {
+            TurnCmd opp_cmd;
+            if (net_received_opponent_cmd(&opp_cmd)) {
+                mirror_turn_cmd(&opp_cmd);
+                g_p2_cmd = opp_cmd;
+                g_p2_locked = true;
+            }
+        }
+    } else {
+        // オフライン: ダミーP2
+        if (!g_p2_locked) {
+            g_p2_cmd.cmd[SLOT_HERO] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[2].pos, .skill_index=0,  .target=0, .center=g_core.units[2].pos };
+            g_p2_cmd.cmd[SLOT_GIRL] = (UnitCmd){ .has_move=true,  .move_to=g_core.units[3].pos, .skill_index=-1, .target=-1, .center=g_core.units[3].pos };
+            g_p2_locked = true;
+        }
     }
 
     try_advance_turn_local();
@@ -1487,6 +1614,17 @@ void scene_battle_update(float dt)
 
 void scene_battle_render(SDL_Renderer *r)
 {
+    // OPPONENT_INFO待ち中の描画
+    if (g_waiting_opponent_info) {
+        SDL_SetRenderDrawColor(r, 10, 10, 16, 255);
+        SDL_RenderClear(r);
+        if (!g_font) g_font = ui_load_font("assets/font/main.otf", 28);
+        ui_text_draw(r, g_font, "対戦準備中...", 520, 330);
+        ui_text_draw(r, g_font, "Esc: キャンセル", 510, 380);
+        SDL_RenderPresent(r);
+        return;
+    }
+
     g_cutin.renderer = r;
     g_cutin.screen_w = 1280;
     g_cutin.screen_h = 720;
@@ -1517,6 +1655,8 @@ void scene_battle_render(SDL_Renderer *r)
             snprintf(st, sizeof(st), "入力: %s  状態: %s",
                      slot_label(g_act_slot), ui_state_label(g_ui));
             ui_text_draw(r, g_font, st, 240, 20);
+        } else if (g_online_mode && !g_p2_locked) {
+            ui_text_draw(r, g_font, "相手のコマンド待ち...", 240, 20);
         } else {
             ui_text_draw(r, g_font, "P1 入力完了", 240, 20);
         }
@@ -1715,6 +1855,8 @@ void scene_battle_render(SDL_Renderer *r)
                 } else {
                     ui_text_draw(r, g_font, "Enter:確定  Q:1手戻し  Esc:強制終了", 80, 692);
                 }
+            } else if (g_online_mode && !g_p2_locked) {
+                ui_text_draw(r, g_font, "相手のコマンド待ち...  Esc:強制終了", 80, 692);
             } else {
                 ui_text_draw(r, g_font, "P1入力完了 → ターン進行", 80, 692);
             }

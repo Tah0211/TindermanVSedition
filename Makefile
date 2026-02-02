@@ -27,6 +27,8 @@ SRC = \
     ui/ui_card.c \
     ui/ui_text.c \
     \
+    net/net_client.c \
+    \
     util/texture.c \
     util/timer.c \
     util/json.c
@@ -37,6 +39,12 @@ OBJ = $(SRC:.c=.o)
 TARGET = tvse
 
 # ===============================
+# サーバ
+# ===============================
+SERVER_SRC = server/server.c
+SERVER_TARGET = server/server
+
+# ===============================
 # ルール
 # ===============================
 all: $(TARGET)
@@ -44,7 +52,12 @@ all: $(TARGET)
 $(TARGET): $(OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-clean:
-	rm -f $(OBJ) $(TARGET)
+server: $(SERVER_TARGET)
 
-.PHONY: all clean
+$(SERVER_TARGET): $(SERVER_SRC)
+	$(CC) -Wall -O2 -std=c11 -o $@ $<
+
+clean:
+	rm -f $(OBJ) $(TARGET) $(SERVER_TARGET)
+
+.PHONY: all clean server

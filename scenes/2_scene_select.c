@@ -6,6 +6,7 @@
 #include "../util/texture.h"
 #include "../ui/ui_text.h"
 #include "../util/json.h"
+#include "../net/net_client.h"
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
@@ -106,6 +107,9 @@ static int decided_index = -1;
 
 static bool finalizing = false;
 static bool pending_finalize = false;
+
+// オンライン対戦: マッチング待ち状態
+static bool online_matching = false;
 
 static Uint32 start_ms;
 static Uint32 deadline_ms;
@@ -343,6 +347,11 @@ void scene_select_enter(void)
     finalizing = false;
     pending_finalize = false;
     glow_t = 0.0f;
+
+    // オンライン: READY送信済みならマッチング待ちから開始
+    online_matching = net_is_online() && (net_get_player_id() < 0);
+    printf("[SELECT] enter: online=%d, player_id=%d, online_matching=%d\n",
+           net_is_online(), net_get_player_id(), online_matching);
 }
 
 // ==============================================================
@@ -350,6 +359,29 @@ void scene_select_enter(void)
 // ==============================================================
 void scene_select_update(float dt)
 {
+    // オンラインマッチング待ち
+    if (online_matching) {
+        net_poll();
+        if (!net_is_online()) {
+            online_matching = false;
+            change_scene(SCENE_HOME);
+            return;
+        }
+        if (net_get_player_id() >= 0) {
+            // マッチング成立 → 通常のキャラ選択へ
+            online_matching = false;
+            start_ms = SDL_GetTicks();
+            deadline_ms = start_ms + 15000;
+        }
+        if (input_is_pressed(SDL_SCANCODE_ESCAPE)) {
+            net_disconnect();
+            online_matching = false;
+            change_scene(SCENE_HOME);
+            return;
+        }
+        return;
+    }
+
     Uint32 now = SDL_GetTicks();
 
     if (!finalizing && !pending_finalize && now >= deadline_ms)
@@ -393,11 +425,18 @@ void scene_select_render(SDL_Renderer *R)
     SDL_SetRenderDrawColor(R, 10, 10, 16, 255);
     SDL_RenderClear(R);
 
+
     ui_text_draw(R, font_main, "SELECT", 40, 20);
 
     int remain = (deadline_ms > SDL_GetTicks())
                  ? (int)((deadline_ms - SDL_GetTicks()) / 1000)
                  : 0;
+
+    // マッチング待ち表示
+    if (online_matching) {
+        ui_text_draw(R, font_main, "マッチング待ち...", 460, 390);
+        return;
+    }
 
     char buf[32];
     snprintf(buf, sizeof(buf), "00:%02d", remain);
