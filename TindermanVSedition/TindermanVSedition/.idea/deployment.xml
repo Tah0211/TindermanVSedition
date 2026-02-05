@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="vmware (93b6c857-8db4-4a80-b6fd-972cc003609f)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/vmware/Project/soft/TindermanVSedition" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>

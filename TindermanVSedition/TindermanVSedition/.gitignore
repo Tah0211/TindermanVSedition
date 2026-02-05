@@ -1,0 +1,33 @@
+# ---- C build artifacts ----
+*.o
+*.out
+*.a
+*.so
+*.exe
+*.dll
+*.obj
+*.log
+*.tmp
+*.swp
+*.stackdump
+
+# make build directories
+build/
+bin/
+obj/
+
+# ---- VSCode ----
+.vscode/
+*.code-workspace
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+env/
+venv/
+pip-log.txt
+
+# ---- OS / general garbage ----
+.DS_Store
+Thumbs.db

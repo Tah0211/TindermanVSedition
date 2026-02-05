@@ -1,0 +1,6 @@
+githubアップロード
+
+git status
+git add .
+git commit -m "今日の作業メモ"
+git push

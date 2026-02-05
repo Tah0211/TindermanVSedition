@@ -1,0 +1,14 @@
+{
+  "st_regen_base": 5,
+  "move_range_base": 6,
+  "girl_id": "himari",
+  "affection": 28,
+  "phase": 0,
+  "turn_in_phase": 0,
+  "core_used": false,
+  "hp_add": 0,
+  "atk_add": 0,
+  "sp_add": 0,
+  "st_add": 0,
+  "tag_learned": 0
+}
