@@ -139,6 +139,19 @@ static void prepend_ld_library_path(const char* add_path)
 }
 
 // mpv を別プロセスで起動して pid を返す。失敗で -1。
+// 過去のmpvプロセスのゾンビを回収（同時実行対策）
+static void reap_zombie_children(void)
+{
+    int status = 0;
+    pid_t r;
+    while ((r = waitpid(-1, &status, WNOHANG)) > 0) {
+        fprintf(stderr, "[CUTIN] reaped zombie child pid=%d\n", (int)r);
+    }
+    if (r < 0 && errno != ECHILD) {
+        fprintf(stderr, "[CUTIN] zombie cleanup error: errno=%d\n", errno);
+    }
+}
+
 static pid_t spawn_mpv_fullscreen_ex(const char* movie_path, bool flip_h)
 {
     pid_t pid = fork();
@@ -255,6 +268,9 @@ bool cutin_play_fullscreen_mpv_ex(CutinContext* ctx,
         return false;
     }
 
+    // 3.5) 過去のmpvゾンビプロセスをクリーンアップ（同時実行対策）
+    reap_zombie_children();
+
     // 4) mpv起動（非同期）
     pid_t mpv_pid = spawn_mpv_fullscreen_ex(movie_path, flip_h);
     fprintf(stderr, "[CUTIN] spawn pid=%d\n", (int)mpv_pid);
@@ -277,6 +293,11 @@ bool cutin_play_fullscreen_mpv_ex(CutinContext* ctx,
             break;
         }
         if (r == -1) {
+            // EINTR (signal interrupted) の場合はリトライ
+            if (errno == EINTR) {
+                fprintf(stderr, "[CUTIN] waitpid interrupted by signal, retrying\n");
+                continue;
+            }
             fprintf(stderr, "[CUTIN] waitpid error: errno=%d\n", errno);
             break;
         }
