@@ -225,21 +225,30 @@ bool cutin_play_fullscreen_mpv_ex(CutinContext* ctx,
 
     // 5) mpv終了待ち（待機中も「イベントを消費しない」）
     int status = 0;
+    pid_t wait_result = 0;
     while (1) {
         pump_events_non_consuming();
 
         pid_t r = waitpid(mpv_pid, &status, WNOHANG);
         if (r == mpv_pid) {
             // 子プロセスが終了
+            wait_result = r;
             break;
         }
         if (r == -1) {
             // waitpidエラー
+            wait_result = r;
             break;
         }
         // r == 0: 子プロセスがまだ実行中 -> ループ継続
 
         SDL_Delay(10);
+    }
+
+    // waitpid がエラーで終了した場合は失敗扱い
+    if (wait_result == -1) {
+        fade_in(ctx->renderer, ctx->screen_w, ctx->screen_h, fade_ms);
+        return false;
     }
 
     // 6) 終了ステータスをチェック
