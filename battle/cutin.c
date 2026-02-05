@@ -224,25 +224,47 @@ bool cutin_play_fullscreen_mpv_ex(CutinContext* ctx,
     }
 
     // 5) mpv終了待ち（待機中も「イベントを消費しない」）
+    int status = 0;
     while (1) {
         pump_events_non_consuming();
 
-        int status = 0;
         pid_t r = waitpid(mpv_pid, &status, WNOHANG);
-        if (r == mpv_pid) break; // 終了
-        if (r == -1) break;      // エラー
+        if (r == mpv_pid) {
+            // 子プロセスが終了
+            break;
+        }
+        if (r == -1) {
+            // waitpidエラー
+            break;
+        }
+        // r == 0: 子プロセスがまだ実行中 -> ループ継続
 
         SDL_Delay(10);
     }
 
-    // 6) 復帰前の黒挟み
+    // 6) 終了ステータスをチェック
+    // mpvが異常終了した場合はfalseを返す
+    if (WIFEXITED(status)) {
+        int exit_code = WEXITSTATUS(status);
+        if (exit_code != 0) {
+            // mpvが異常終了（起動失敗など）
+            fade_in(ctx->renderer, ctx->screen_w, ctx->screen_h, fade_ms);
+            return false;
+        }
+    } else if (WIFSIGNALED(status)) {
+        // シグナルで終了（クラッシュなど）
+        fade_in(ctx->renderer, ctx->screen_w, ctx->screen_h, fade_ms);
+        return false;
+    }
+
+    // 7) 復帰前の黒挟み
     SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 255);
     SDL_Rect rect = {0, 0, ctx->screen_w, ctx->screen_h};
     SDL_RenderFillRect(ctx->renderer, &rect);
     SDL_RenderPresent(ctx->renderer);
     SDL_Delay(50);
 
-    // 7) フェードイン
+    // 8) フェードイン
     fade_in(ctx->renderer, ctx->screen_w, ctx->screen_h, fade_ms);
     return true;
 }
