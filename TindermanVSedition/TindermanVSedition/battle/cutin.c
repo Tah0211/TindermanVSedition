@@ -142,11 +142,13 @@ static void prepend_ld_library_path(const char* add_path)
 // 過去のmpvプロセスのゾンビを回収（同時実行対策）
 static void reap_zombie_children(void)
 {
-    while (1) {
-        int status = 0;
-        pid_t r = waitpid(-1, &status, WNOHANG);
-        if (r <= 0) break;  // No more zombies or error
+    int status = 0;
+    pid_t r;
+    while ((r = waitpid(-1, &status, WNOHANG)) > 0) {
         fprintf(stderr, "[CUTIN] reaped zombie child pid=%d\n", (int)r);
+    }
+    if (r < 0 && errno != ECHILD) {
+        fprintf(stderr, "[CUTIN] zombie cleanup error: errno=%d\n", errno);
     }
 }
 

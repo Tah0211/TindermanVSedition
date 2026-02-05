@@ -16,6 +16,10 @@ build/
 bin/
 obj/
 
+# Project executables
+tvse
+server/server
+
 # ---- VSCode ----
 .vscode/
 *.code-workspace
