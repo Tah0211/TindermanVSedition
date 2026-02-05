@@ -79,7 +79,7 @@ static const char* choose_cutin_mp4(const char *skill_id, int target_ui, char *o
         const char *p = battle_skill_movie_path(skill_id);
         if (p && p[0]) {
             snprintf(out, out_sz, "%s", p);
-            return out;
+            if (access(out, R_OK) == 0) return out;
         }
     }
 
