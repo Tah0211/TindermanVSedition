@@ -130,9 +130,8 @@ static void mirror_turn_cmd(TurnCmd *cmd)
 {
     for (int s = 0; s < 2; s++) {
         UnitCmd *uc = &cmd->cmd[s];
-        if (uc->has_move) {
-            uc->move_to.x = 20 - uc->move_to.x;
-        }
+        // move_to.xは常に反転（centerのデフォルト値としても使われるため）
+        uc->move_to.x = 20 - uc->move_to.x;
         uc->center.x = 20 - uc->center.x;
     }
 }
