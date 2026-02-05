@@ -225,7 +225,7 @@ bool cutin_play_fullscreen_mpv_ex(CutinContext* ctx,
 
     // 5) mpv終了待ち（待機中も「イベントを消費しない」）
     int status = 0;
-    pid_t wait_result = 0;
+    pid_t wait_result = -1;
     while (1) {
         pump_events_non_consuming();
 
@@ -245,23 +245,23 @@ bool cutin_play_fullscreen_mpv_ex(CutinContext* ctx,
         SDL_Delay(10);
     }
 
-    // waitpid がエラーで終了した場合は失敗扱い
-    if (wait_result == -1) {
-        fade_in(ctx->renderer, ctx->screen_w, ctx->screen_h, fade_ms);
-        return false;
-    }
-
     // 6) 終了ステータスをチェック
-    // mpvが異常終了した場合はfalseを返す
-    if (WIFEXITED(status)) {
+    bool mpv_success = false;
+    
+    if (wait_result == -1) {
+        // waitpid がエラーで終了
+        mpv_success = false;
+    } else if (WIFEXITED(status)) {
+        // 正常終了：終了コードをチェック
         int exit_code = WEXITSTATUS(status);
-        if (exit_code != 0) {
-            // mpvが異常終了（起動失敗など）
-            fade_in(ctx->renderer, ctx->screen_w, ctx->screen_h, fade_ms);
-            return false;
-        }
+        mpv_success = (exit_code == 0);
     } else if (WIFSIGNALED(status)) {
         // シグナルで終了（クラッシュなど）
+        mpv_success = false;
+    }
+
+    // mpv が失敗した場合はフェードインして終了
+    if (!mpv_success) {
         fade_in(ctx->renderer, ctx->screen_w, ctx->screen_h, fade_ms);
         return false;
     }
