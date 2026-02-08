@@ -358,6 +358,7 @@ static float g_act_pause_left = 0.0f;
 // ===============================
 static float g_disp_hp[4];
 static float g_disp_st[4];
+static int   g_st_max[4];
 
 // 追従速度（大きいほど速く追従）
 static float g_bar_lerp_hp = 10.0f;
@@ -478,20 +479,32 @@ static int get_skill_count_for_unit(const Unit *u)
     return char_def_get_available_skill_count(cd, is_tag_learned_for_unit(u));
 }
 
+
+static int calc_unit_ui(const Unit *u)
+{
+    if (!u) return -1;
+    for (int i = 0; i < 4; i++) {
+        if (&g_core.units[i] == u) return i;
+    }
+    return -1;
+}
+
 static int calc_unit_max_hp(const Unit *u)
 {
-    if (u->slot == SLOT_HERO) return HERO_HP_MAX;
+    int ui = calc_unit_ui(u);
+    if (ui < 0) return 1;
 
-    int max_hp = read_int_or("hp_base", 100) + read_int_or("hp_add", 0);
+    int max_hp = g_core.hp_max[ui];
     if (max_hp < 1) max_hp = 1;
     return max_hp;
 }
 
 static int calc_unit_max_st(const Unit *u)
 {
-    if (u->slot == SLOT_HERO) return HERO_ST_MAX;
+    int ui = calc_unit_ui(u);
+    if (ui < 0) return 1;
 
-    int max_st = read_int_or("st_base", 30) + read_int_or("st_add", 0);
+    int max_st = g_st_max[ui];
     if (max_st < 1) max_st = 1;
     return max_st;
 }
@@ -606,6 +619,11 @@ static void init_battle_core(void)
 
     g_p1_tag_learned = p1_tag;
     g_p2_tag_learned = p2_tag;
+
+    g_st_max[0] = p1h.st;
+    g_st_max[1] = p1g.st;
+    g_st_max[2] = p2h.st;
+    g_st_max[3] = p2g.st;
 
     bool ok = battle_core_init(&g_core,
                               p1_girl_id, p1_tag, p1h, p1g,
