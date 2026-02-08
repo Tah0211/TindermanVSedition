@@ -15,10 +15,10 @@ static const SkillDef g_skills[] = {
 
     // 技3：ST50 / 射程∞ / 味方全員HP+30
     // range=-1 を「射程∞」として扱う（射程判定/表示はスキップ）
-    { "hero_tech3", "全体回復", SKTYPE_HEAL, -1, 50, SKT_AOE, 30, 0, 1, false },
+    { "hero_tech3", "エリアリカバー", SKTYPE_HEAL, -1, 50, SKT_AOE, 30, 0, 1, false },
 
     // =========================
-    // himari
+    // himaris
     // =========================
     // 技1：ST5 / 射程2 / ATK
     { "himari_1", "神越演舞", SKTYPE_ATTACK, 2, 5, SKT_SINGLE, 0, 0, 1, false },
@@ -40,7 +40,7 @@ static const SkillDef g_skills[] = {
     { "kiritan_1", "裁きの刃", SKTYPE_ATTACK, 12, 20, SKT_SINGLE, 10, 0, 1, false },
 
     // 技2：ST35 / 射程16 / ATK+10
-    { "kiritan_2", "何とかビーム", SKTYPE_ATTACK, 16, 35, SKT_SINGLE, 10, 0, 1, false },
+    { "kiritan_2", "粉塵爆発", SKTYPE_ATTACK, 16, 35, SKT_SINGLE, 10, 0, 1, false },
 
     // 技3：ST40 / 射程12（範囲攻撃）/ ATK+15 / 半径1
     { "kiritan_3", "スターダストフォール", SKTYPE_ATTACK, -1, 40, SKT_AOE, 15, 8, 1, false },

@@ -863,7 +863,8 @@ static void exec_update(float dt)
                                                 g_core.last_executed_target_ui,
                                                 mp4buf, sizeof(mp4buf));
                 if (mp4 && mp4[0]) {
-                    cutin_play_fullscreen_mpv(&g_cutin, mp4, 200, true);
+                    bool flip_h = (g_core.last_executed_actor_ui >= 2);
+                    cutin_play_fullscreen_mpv_ex(&g_cutin, mp4, 200, true, flip_h);
                 }
             }
             // 効果適用（HP/ST等）
