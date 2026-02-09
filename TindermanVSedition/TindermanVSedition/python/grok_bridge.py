@@ -38,7 +38,7 @@ API_BASE = os.getenv("XAI_API_BASE", "https://api.x.ai/v1")
 API_MODEL = os.getenv("XAI_API_MODEL", "grok-4-1-fast-reasoning")
 
 # 必須：環境変数で設定（例：export XAI_API_KEY="xxxxx"）
-API_KEY = os.getenv("XAI_API_KEY", "xai-0We0HBC9bxwag9Pnr2f7KbQOU3v5zMomrCTVDieeWFkt6kj3m13GBgO25w58OiQXAqO6YrlRdLVkAuQA ").strip()
+API_KEY = os.getenv("XAI_API_KEY", "").strip()
 
 # ============================================================
 # emotion (strict)

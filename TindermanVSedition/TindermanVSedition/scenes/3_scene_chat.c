@@ -28,7 +28,7 @@
 // =============================================================
 
 // 合計ターン数（= 会話の往復回数）
-#define TOTAL_TURNS 1
+#define TOTAL_TURNS 8
 
 // 1ターンの制限時間（秒）
 #define TURN_LIMIT_SEC 15.0f
@@ -394,7 +394,7 @@ static float intro_timer = 0.0f;
 static bool intro_done = false;
 
 // ターン制
-static int g_turn_done = 0;                 // 既に完了したターン数（0..TOTAL_TURNS）
+static int g_turn_done = 0; // 既に完了したターン数（0..TOTAL_TURNS）
 static float g_turn_time_left = TURN_LIMIT_SEC;
 
 // 終了
@@ -448,8 +448,8 @@ static void draw_text(SDL_Renderer *r, TTF_Font *font, int x, int y, const char 
 // 自動改行
 // =============================================================
 static int wrap_text_internal(SDL_Renderer *r, TTF_Font *font,
-                             int x, int y, int max_width,
-                             const char *text, int line_spacing, bool render)
+                              int x, int y, int max_width,
+                              const char *text, int line_spacing, bool render)
 {
     const char *p = text;
     char line[1024] = {0};

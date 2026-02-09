@@ -2,83 +2,83 @@
   "messages": [
     {
       "role": "user",
-      "content": "こんにちは、く"
+      "content": "こんにちは"
     },
     {
       "role": "assistant",
-      "content": "……こんにちは、って。急に何の用ですか……怪しいんですけど。",
+      "content": "こんにちは。はじめまして、冥鳴ひまりです。よろしくお願いいたします。",
+      "emotion": "joy",
+      "heart_delta": 1
+    },
+    {
+      "role": "user",
+      "content": "今日はいい天気だね！"
+    },
+    {
+      "role": "assistant",
+      "content": "ええ、本当にいいお天気ですね。空がきれいで、心も晴れやかになります。",
+      "emotion": "joy",
+      "heart_delta": 2
+    },
+    {
+      "role": "user",
+      "content": "こんなひはね"
+    },
+    {
+      "role": "assistant",
+      "content": "ええ、こんな日は外を散策したくなりますね。何かお出かけの予定はございますか？",
+      "emotion": "joy",
+      "heart_delta": 1
+    },
+    {
+      "role": "user",
+      "content": "僕はお散歩したいね"
+    },
+    {
+      "role": "assistant",
+      "content": "お散歩、いいですね。私もそんな気分になってきました。おすすめの場所などございますか？",
+      "emotion": "joy",
+      "heart_delta": 1
+    },
+    {
+      "role": "user",
+      "content": "兵庫県の川西だよ"
+    },
+    {
+      "role": "assistant",
+      "content": "兵庫県の川西ですか。穏やかな街並みが素敵ですね。お散歩にぴったりだと思います。何かお気に入りのスポットはございますか？",
+      "emotion": "joy",
+      "heart_delta": 1
+    },
+    {
+      "role": "user",
+      "content": "お花見スポットだよ！"
+    },
+    {
+      "role": "assistant",
+      "content": "お花見スポットですか。春の風情が感じられて、素敵ですね。どんな桜がおすすめでしょうか",
+      "emotion": "joy",
+      "heart_delta": 2
+    },
+    {
+      "role": "user",
+      "content": "だね！"
+    },
+    {
+      "role": "assistant",
+      "content": "ええ、だねって感じですね。お花見の季節は特別です。何かお弁当など用意されますか？",
+      "emotion": "joy",
+      "heart_delta": 1
+    },
+    {
+      "role": "user",
+      "content": "…"
+    },
+    {
+      "role": "assistant",
+      "content": "…何か考え事でしょうか。お花見のお話、もっと聞かせていただけますか",
       "emotion": "fear",
-      "heart_delta": -2
-    },
-    {
-      "role": "user",
-      "content": "…"
-    },
-    {
-      "role": "assistant",
-      "content": "……何なんですか、その沈黙。用がないなら、さっさと消えてくださいよ。邪魔です。",
-      "emotion": "anger",
-      "heart_delta": -2
-    },
-    {
-      "role": "user",
-      "content": "…"
-    },
-    {
-      "role": "assistant",
-      "content": "……また沈黙ですか。からかって楽しんでるんですか？ くだらないんですけど。",
-      "emotion": "anger",
-      "heart_delta": -3
-    },
-    {
-      "role": "user",
-      "content": "…"
-    },
-    {
-      "role": "assistant",
-      "content": "……しつこい沈黙、何なんですか。暇なら他所でやってくださいよ。イラッとします。」",
-      "emotion": "anger",
-      "heart_delta": -3
-    },
-    {
-      "role": "user",
-      "content": "…"
-    },
-    {
-      "role": "assistant",
-      "content": "……もう、うざいです。沈黙で遊ぶの、やめてもらえますか。時間の無駄です。",
-      "emotion": "anger",
-      "heart_delta": -3
-    },
-    {
-      "role": "user",
-      "content": "…"
-    },
-    {
-      "role": "assistant",
-      "content": "……いい加減にしてくださいよ。この沈黙、何のつもりですか。鬱陶しいんですけど。",
-      "emotion": "anger",
-      "heart_delta": -2
-    },
-    {
-      "role": "user",
-      "content": "…"
-    },
-    {
-      "role": "assistant",
-      "content": "……もう限界です。この沈黙、ほんとに腹立たしいんですけど。消えてくれませんか。",
-      "emotion": "anger",
-      "heart_delta": -3
-    },
-    {
-      "role": "user",
-      "content": "…"
-    },
-    {
-      "role": "assistant",
-      "content": "……もう、ほんとにうんざりです。この沈黙、いつまで続けるんですか。関わらないでくださいよ。",
-      "emotion": "anger",
-      "heart_delta": -2
+      "heart_delta": -1
     }
   ]
 }
