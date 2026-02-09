@@ -10,7 +10,7 @@
   "st_base": 40,
   "st_regen_base": 20,
   "move_range_base": 3,
-  "hp_add": 0,
+  "hp_add": 10,
   "atk_add": 0,
   "sp_add": 0,
   "st_add": 0,
